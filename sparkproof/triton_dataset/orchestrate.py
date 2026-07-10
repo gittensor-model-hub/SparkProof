@@ -57,16 +57,19 @@ def run_dataset_generation_step(
             results.append(
                 {
                     "task_id": evolved["task_id"],
+                    "prompt": evolved.get("prompt", ""),
+                    "system": evolved.get("system", ""),
                     "status": "accepted",
                     "trajectory": outcome["trajectory"],
                     "tier": outcome.get("tier", "gold"),
+                    "candidates": outcome.get("candidates", []),
                 }
             )
         else:
             failure = record_failure(
                 run_id=run_id,
                 task=evolved,
-                model=getattr(client, "model", "teacher"),
+                model=outcome.get("provider") or getattr(client, "model", "teacher"),
                 validation=outcome.get("validation") or {},
                 response=outcome.get("response", ""),
             )
@@ -79,9 +82,12 @@ def run_dataset_generation_step(
             results.append(
                 {
                     "task_id": evolved["task_id"],
+                    "prompt": evolved.get("prompt", ""),
+                    "system": evolved.get("system", ""),
                     "status": "mined_failure",
                     "failure_class": failure.get("failure_class"),
                     "mined_tasks": len(mined),
+                    "candidates": outcome.get("candidates", []),
                 }
             )
     return {"base_task_id": task["task_id"], "results": results}

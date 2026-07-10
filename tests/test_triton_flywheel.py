@@ -1,11 +1,13 @@
 import ast
 import json
 from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import pytest
 
 from sparkproof.triton.validator import TritonKernelValidator
+from sparkproof.pipeline.blackwell import prove_blackwell_trajectories
 from sparkproof.triton_dataset.adversarial_harness import (
     SEED_PASS_MARKER,
     build_adversarial_wrapper,
@@ -15,10 +17,11 @@ from sparkproof.triton_dataset.anti_cheat import analyze_anti_cheat, detect_torc
 from sparkproof.triton_dataset.benchmark_pairs import build_preference_pair, preference_pairs_from_adjudication
 from sparkproof.triton_dataset.build_prompts import build_prompts_file
 from sparkproof.triton_dataset.dataset_split import assign_splits, split_group_key, summarize_splits
-from sparkproof.triton_dataset.dpo_export import export_dpo_jsonl
+from sparkproof.triton_dataset.dpo_export import enrich_adjudication_with_responses, export_dpo_jsonl
 from sparkproof.triton_dataset.error_capture import capture_execution_error
 from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
 from sparkproof.triton_dataset.multi_candidate import _client_value
+from sparkproof.triton_dataset.python_runner import PythonExecution
 from sparkproof.triton_dataset.prompt_templates import apply_prompt_template, wrap_prompt
 from sparkproof.triton_dataset.torch_ops import iter_torch_translation_prompts
 
@@ -107,16 +110,24 @@ def test_adversarial_wrapper_keeps_candidate_at_module_scope():
     ast.parse(wrapped)
 
 
+def test_seed_rewrite_preserves_nonempty_nested_suites():
+    wrapped = build_adversarial_wrapper(
+        "def setup():\n    torch.manual_seed(42)\nsetup()\nprint('SPARKPROOF_TRITON_PASS')"
+    )
+    ast.parse(wrapped)
+    assert "torch.manual_seed(_sparkproof_seed)" in wrapped
+
+
 def test_adversarial_execution_tracks_each_seed_without_marker_double_count(monkeypatch):
     def fake_run(*args, **kwargs):
-        seed = kwargs["env"]["SPARKPROOF_ADVERSARIAL_SEED"]
-        return SimpleNamespace(
+        seed = kwargs["env_overrides"]["SPARKPROOF_ADVERSARIAL_SEED"]
+        return PythonExecution(
             returncode=0,
             stdout=f"SPARKPROOF_TRITON_PASS\n{SEED_PASS_MARKER}:{seed}\n",
             stderr="",
         )
 
-    monkeypatch.setattr("sparkproof.triton_dataset.adversarial_harness.subprocess.run", fake_run)
+    monkeypatch.setattr("sparkproof.triton_dataset.adversarial_harness.run_python_source", fake_run)
     result = run_adversarial_execution("print('SPARKPROOF_TRITON_PASS')", seeds=(0, 7, 42))
     assert result["passed"] is True
     assert result["seed_passes"] == 3
@@ -127,7 +138,7 @@ def test_strict_validator_accepts_reference_ops_outside_launcher(monkeypatch):
     monkeypatch.setattr(
         validator,
         "compile_and_execute",
-        lambda code: (True, "SPARKPROOF_TRITON_PASS"),
+        lambda code, **kwargs: (True, "SPARKPROOF_TRITON_PASS"),
     )
     monkeypatch.setattr(
         "sparkproof.triton.validator.run_adversarial_execution",
@@ -143,11 +154,11 @@ def test_strict_validator_accepts_reference_ops_outside_launcher(monkeypatch):
 def test_preference_pair_requires_measurable_speedup():
     winner = {
         "response": "fast",
-        "validation": {"benchmark": {"timing_ms": 8.0, "timing_method": "candidate_triton_do_bench"}},
+        "validation": {"benchmark": {"timing_ms": 8.0, "timing_method": "monitored_triton_do_bench"}},
     }
     loser = {
         "response": "slow",
-        "validation": {"benchmark": {"timing_ms": 10.0, "timing_method": "candidate_triton_do_bench"}},
+        "validation": {"benchmark": {"timing_ms": 10.0, "timing_method": "monitored_triton_do_bench"}},
     }
     pair = build_preference_pair(
         task_id="matmul",
@@ -179,14 +190,14 @@ def test_preference_pairs_from_adjudication():
                     "passed": True,
                     "response": "winner",
                     "validation": {
-                        "benchmark": {"timing_ms": 5.0, "timing_method": "candidate_triton_do_bench"}
+                        "benchmark": {"timing_ms": 5.0, "timing_method": "monitored_triton_do_bench"}
                     },
                 },
                 {
                     "passed": True,
                     "response": "loser",
                     "validation": {
-                        "benchmark": {"timing_ms": 7.0, "timing_method": "candidate_triton_do_bench"}
+                        "benchmark": {"timing_ms": 7.0, "timing_method": "monitored_triton_do_bench"}
                     },
                 },
             ],
@@ -198,6 +209,67 @@ def test_preference_pairs_from_adjudication():
     assert exported[0]["prompt"] == "Optimize matmul"
     assert exported[0]["chosen"] == "winner"
     assert exported[0]["rejected"] == "loser"
+
+
+def test_orchestrated_adjudication_exports_dpo_pairs():
+    rows = [
+        {
+            "base_task_id": "base",
+            "results": [
+                {
+                    "task_id": "base",
+                    "prompt": "Optimize matmul",
+                    "candidates": [
+                        {
+                            "passed": True,
+                            "response": "fast",
+                            "validation": {
+                                "benchmark": {
+                                    "timing_ms": 5.0,
+                                    "timing_method": "monitored_triton_do_bench",
+                                }
+                            },
+                        },
+                        {
+                            "passed": True,
+                            "response": "slow",
+                            "validation": {
+                                "benchmark": {
+                                    "timing_ms": 7.0,
+                                    "timing_method": "monitored_triton_do_bench",
+                                }
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+    ]
+    pairs = export_dpo_jsonl(rows, min_speedup=0.01)
+    assert len(pairs) == 1
+    assert pairs[0]["chosen"] == "fast"
+
+
+def test_checkpoint_backfill_uses_original_prompt_without_faking_candidates(tmp_path):
+    checkpoint = tmp_path / "checkpoint.jsonl"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "prompt": "repair instruction",
+                "response": "winner",
+                "metadata": {"prompt_meta": {"task_id": "task", "prompt": "original prompt"}},
+                "sparkproof_validation": {"passed": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    rows = enrich_adjudication_with_responses(
+        [{"task_id": "task", "candidates": []}],
+        checkpoint_path=checkpoint,
+    )
+    assert rows[0]["prompt"] == "original prompt"
+    assert rows[0]["candidates"] == []
 
 
 def test_dataset_split_keeps_ancestry_groups_together():
@@ -238,22 +310,66 @@ def test_dataset_split_keeps_parent_and_descendant_together():
     assert len({record["split_group"] for record in split_records}) == 1
 
 
+def test_dataset_split_quarantines_entire_eval_component():
+    records = [
+        {
+            "task_id": "eval",
+            "task_family": "softmax",
+            "split": "eval",
+        },
+        {
+            "task_id": "sibling",
+            "task_family": "softmax",
+            "split": "train",
+        },
+    ]
+    split_records = assign_splits(records, dev_fraction=0.5)
+    assert {record["split"] for record in split_records} == {"eval"}
+    assert len({record["split_group"] for record in split_records}) == 1
+
+
 def test_benchmark_parses_kernel_timing_marker():
     result = TritonKernelValidator._benchmark_score(
         "@triton.jit\ndef kernel():\n    pass\ngrid = (1,)",
-        "SPARKPROOF_TRITON_PASS\nSPARKPROOF_TRITON_TIMING_MS: 0.125\n",
+        "SPARKPROOF_TRITON_PASS\nSPARKPROOF_TRUSTED_TIMING_MS: 0.125\n",
     )
     assert result["timing_ms"] == pytest.approx(0.125)
-    assert result["timing_method"] == "candidate_triton_do_bench"
+    assert result["timing_method"] == "monitored_triton_do_bench"
+
+
+def test_benchmark_wrapper_monitors_real_do_bench_calls(monkeypatch):
+    captured = {}
+
+    def fake_run(source, **kwargs):
+        captured["source"] = source
+        nonce = re.search(r"SPARKPROOF_MONITORED_TIMING_([0-9a-f]+)", source).group(1)
+        return PythonExecution(
+            returncode=0,
+            stdout=(
+                "SPARKPROOF_TRITON_PASS\n"
+                "SPARKPROOF_TRUSTED_TIMING_MS: 0.001\n"
+                f"SPARKPROOF_MONITORED_TIMING_{nonce}: 0.25\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("sparkproof.triton.validator.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton.validator.run_python_source", fake_run)
+    validator = TritonKernelValidator()
+    passed, output = validator.compile_and_execute(VALID_KERNEL, monitor_benchmark=True)
+    assert passed is True
+    assert "_sparkproof_original_do_bench" in captured["source"]
+    assert "SPARKPROOF_TRUSTED_TIMING_MS: 0.25" in output
+    assert "0.001" not in output
 
 
 def test_ir_capture_uses_triton_dump_directory(monkeypatch):
     def fake_run(*args, **kwargs):
-        dump_dir = Path(kwargs["env"]["TRITON_DUMP_DIR"])
+        dump_dir = Path(kwargs["env_overrides"]["TRITON_DUMP_DIR"])
         (dump_dir / "kernel.ttir").write_text("module { tt.func @kernel }", encoding="utf-8")
-        return SimpleNamespace(returncode=0, stdout="SPARKPROOF_TRITON_PASS\n", stderr="")
+        return PythonExecution(returncode=0, stdout="SPARKPROOF_TRITON_PASS\n", stderr="")
 
-    monkeypatch.setattr("sparkproof.triton_dataset.ir_artifacts.subprocess.run", fake_run)
+    monkeypatch.setattr("sparkproof.triton_dataset.ir_artifacts.run_python_source", fake_run)
     result = capture_ir_artifacts("print('SPARKPROOF_TRITON_PASS')")
     assert result["available"] is True
     assert "tt.func @kernel" in result["artifacts"]["ttir"]
@@ -273,6 +389,72 @@ def test_client_value_supports_dicts_and_objects():
     assert _client_value(SimpleNamespace(gpu_index=4), "gpu_index", 0) == 4
 
 
+def test_proving_gate_reapplies_strict_validation(monkeypatch):
+    calls = []
+
+    class FakeValidator:
+        def __init__(self, *, gpu_index):
+            self.gpu_index = gpu_index
+
+        def validate_response(self, response, **kwargs):
+            calls.append(kwargs)
+            return {"passed": True, "stages": {"anti_cheat": {"passed": True}}}
+
+    class FakeManifest:
+        def to_dict(self):
+            return {"merkle_root": "root"}
+
+    monkeypatch.setattr("sparkproof.pipeline.blackwell.require_blackwell_gpu", lambda gpu_index: {"gpu": gpu_index})
+    monkeypatch.setattr("sparkproof.pipeline.blackwell.TritonKernelValidator", FakeValidator)
+    monkeypatch.setattr("sparkproof.pipeline.blackwell.build_manifest_v2", lambda *args, **kwargs: FakeManifest())
+
+    verified, _, _ = prove_blackwell_trajectories(
+        [{"response": VALID_KERNEL}],
+        prompts_sha256="abc",
+        strict_validate=True,
+        capture_ir=True,
+        attest_gpu=False,
+    )
+    assert len(verified) == 1
+    assert calls == [{"run_benchmark": False, "strict": True, "capture_ir": True}]
+    assert verified[0]["sparkproof_validation"]["stages"]["anti_cheat"]["passed"] is True
+
+
+def test_proving_gate_does_not_downgrade_existing_strict_evidence(monkeypatch):
+    calls = []
+
+    class FakeValidator:
+        def __init__(self, *, gpu_index):
+            pass
+
+        def validate_response(self, response, **kwargs):
+            calls.append(kwargs)
+            return {"passed": True, "stages": {}}
+
+    class FakeManifest:
+        def to_dict(self):
+            return {"merkle_root": "root"}
+
+    monkeypatch.setattr("sparkproof.pipeline.blackwell.require_blackwell_gpu", lambda gpu_index: {})
+    monkeypatch.setattr("sparkproof.pipeline.blackwell.TritonKernelValidator", FakeValidator)
+    monkeypatch.setattr("sparkproof.pipeline.blackwell.build_manifest_v2", lambda *args, **kwargs: FakeManifest())
+
+    prove_blackwell_trajectories(
+        [
+            {
+                "response": VALID_KERNEL,
+                "sparkproof_validation": {
+                    "passed": True,
+                    "stages": {"anti_cheat": {"passed": True}, "ir_artifacts": {"available": True}},
+                },
+            }
+        ],
+        prompts_sha256="abc",
+        attest_gpu=False,
+    )
+    assert calls == [{"run_benchmark": False, "strict": True, "capture_ir": True}]
+
+
 def test_prompt_templates_add_sections():
     record = apply_prompt_template(
         {
@@ -287,7 +469,7 @@ def test_prompt_templates_add_sections():
     assert "## Design" in record["prompt"]
     assert "## Implementation" in record["prompt"]
     assert "SPARKPROOF_TRITON_PASS" in record["prompt"]
-    assert "SPARKPROOF_TRITON_TIMING_MS" in record["prompt"]
+    assert "triton.testing.do_bench" in record["prompt"]
     assert record["prompt_template"] == "translation:structured-v1"
     assert "Implement ReLU." in record["prompt"]
     assert wrap_prompt("body only", include_sections=False) == "body only"

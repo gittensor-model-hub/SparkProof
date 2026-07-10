@@ -27,7 +27,11 @@ def enrich_adjudication_with_responses(
     *,
     checkpoint_path: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Attach full candidate responses from generation checkpoint when missing."""
+    """Backfill original prompts from winner checkpoints.
+
+    Checkpoints intentionally contain winners only, so they cannot reconstruct
+    missing loser candidates for preference pairs.
+    """
     if checkpoint_path is None or not checkpoint_path.is_file():
         return adjudication
 
@@ -50,17 +54,7 @@ def enrich_adjudication_with_responses(
         if not out.get("prompt") and trajectories:
             first = trajectories[0]
             prompt_meta = (first.get("metadata") or {}).get("prompt_meta") or {}
-            out["prompt"] = prompt_meta.get("prompt") or first.get("prompt") or ""
-        if trajectories and not any(c.get("response") for c in out.get("candidates", [])):
-            out["candidates"] = [
-                {
-                    "provider": traj.get("provider"),
-                    "passed": (traj.get("sparkproof_validation") or {}).get("passed"),
-                    "validation": traj.get("sparkproof_validation") or {},
-                    "response": traj.get("response", ""),
-                }
-                for traj in trajectories
-            ]
+            out["prompt"] = prompt_meta.get("prompt") or ""
         enriched.append(out)
     return enriched
 
@@ -70,7 +64,13 @@ def export_dpo_jsonl(
     *,
     min_speedup: float = 0.03,
 ) -> list[dict[str, Any]]:
-    pairs = preference_pairs_from_adjudication(list(adjudication_rows), min_speedup=min_speedup)
+    normalized: list[dict[str, Any]] = []
+    for row in adjudication_rows:
+        if isinstance(row.get("results"), list):
+            normalized.extend(result for result in row["results"] if isinstance(result, dict))
+        else:
+            normalized.append(row)
+    pairs = preference_pairs_from_adjudication(normalized, min_speedup=min_speedup)
     return [
         {
             "prompt": pair["prompt"],

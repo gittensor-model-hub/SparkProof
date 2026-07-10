@@ -23,8 +23,8 @@ VALIDATION_SECTION = """## Validation expectations
 - Kernel must launch with explicit grid syntax: `kernel[grid](...)`
 - Tests must cover non-power-of-two tails and multiple random seeds
 - Document rtol/atol choices when comparing fp16 outputs
-- Benchmark the launcher with `triton.testing.do_bench` and print the median as
-  `SPARKPROOF_TRITON_TIMING_MS: <milliseconds>`"""
+- Invoke `triton.testing.do_bench(lambda: launcher(...))`; SparkProof records
+  the returned timing independently"""
 
 
 def wrap_prompt(

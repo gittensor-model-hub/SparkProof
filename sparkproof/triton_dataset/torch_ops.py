@@ -133,8 +133,8 @@ Requirements:
 5. Instantiate symbolic dimensions with concrete adversarial sizes; use a non-power-of-two tail such as 1003
 6. Test float32 and float16 inputs (and state justified tolerances)
 7. Print SPARKPROOF_TRITON_PASS after successful test
-8. Benchmark the launcher with triton.testing.do_bench and print
-   SPARKPROOF_TRITON_TIMING_MS: <median milliseconds>"""
+8. Invoke triton.testing.do_bench(lambda: launcher(...)); SparkProof records
+   the returned timing independently"""
     if shape_preset:
         shape_hint = ", ".join(f"{key}={value}" for key, value in sorted(shape_preset.items()))
         prompt += f"\n\nUse these concrete dimensions in your self-test: {shape_hint}"

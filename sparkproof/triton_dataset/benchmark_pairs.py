@@ -10,7 +10,7 @@ DEFAULT_MIN_SPEEDUP = 0.03
 
 def _latency_ms(validation: dict[str, Any]) -> float | None:
     bench = validation.get("benchmark") or {}
-    if bench.get("timing_method") != "candidate_triton_do_bench":
+    if bench.get("timing_method") != "monitored_triton_do_bench":
         return None
     timing = bench.get("timing_ms")
     if isinstance(timing, (int, float)):

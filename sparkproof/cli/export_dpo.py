@@ -35,6 +35,11 @@ def main(argv: list[str] | None = None) -> int:
     pairs = export_dpo_jsonl(rows, min_speedup=args.min_speedup)
     count = write_dpo_jsonl(args.out, pairs)
     print(f"exported {count} DPO pairs to {args.out}", file=sys.stderr)
+    if count == 0:
+        print(
+            "warning: no task had two passing, monitored benchmarks above the speedup threshold",
+            file=sys.stderr,
+        )
     return 0
 
 

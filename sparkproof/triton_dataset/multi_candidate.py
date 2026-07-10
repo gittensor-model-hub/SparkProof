@@ -237,6 +237,17 @@ def generate_best_candidate(
         capture_ir=capture_ir,
         validator=validator,
     )
+    candidate_rows = [
+        {
+            "provider": candidate.provider,
+            "passed": candidate.validation.get("passed", False),
+            "score": candidate.score,
+            "repairs_used": candidate.repairs_used,
+            "validation": candidate.validation,
+            "response": candidate.record.get("response", ""),
+        }
+        for candidate in all_candidates
+    ]
     if winner is not None:
         return {
             "passed": True,
@@ -245,6 +256,7 @@ def generate_best_candidate(
             "tier": winner.record.get("metadata", {}).get("tier", "gold"),
             "trajectory": winner.record,
             "provider": winner.provider,
+            "candidates": candidate_rows,
         }
     failed = all_candidates[0] if all_candidates else None
     return {
@@ -252,4 +264,6 @@ def generate_best_candidate(
         "response": failed.record["response"] if failed else "",
         "validation": failed.validation if failed else {"passed": False, "fail_reason": "no_candidates"},
         "tier": "reject",
+        "provider": failed.provider if failed else None,
+        "candidates": candidate_rows,
     }

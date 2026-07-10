@@ -29,11 +29,20 @@ def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _has_validation_stage(records: list[dict[str, Any]], stage: str) -> bool:
+    return any(
+        stage in ((record.get("sparkproof_validation") or {}).get("stages") or {})
+        for record in records
+    )
+
+
 def prove_blackwell_bundle(
     bundle_dir: Path,
     *,
     gpu_index: int = 0,
     benchmark: bool = False,
+    strict_validate: bool = False,
+    capture_ir: bool = False,
     attest_gpu: bool = True,
     min_pass_rate: float = 0.0,
 ) -> dict[str, Any]:
@@ -69,13 +78,21 @@ def prove_blackwell_bundle(
 
     raw = _load_trajectories(trajectories_path)
     _write_jsonl(bundle_dir / "trajectories_raw.jsonl", raw)
+    # Never silently downgrade evidence already required during generation.
+    strict_validate = strict_validate or _has_validation_stage(raw, "anti_cheat")
+    capture_ir = capture_ir or _has_validation_stage(raw, "ir_artifacts")
 
     validator = TritonKernelValidator(gpu_index=gpu_index)
     validation_reports: list[dict[str, Any]] = []
     verified: list[dict[str, Any]] = []
 
     for i, record in enumerate(raw):
-        validation = validator.validate_response(record["response"], run_benchmark=benchmark)
+        validation = validator.validate_response(
+            record["response"],
+            run_benchmark=benchmark,
+            strict=strict_validate,
+            capture_ir=capture_ir,
+        )
         validation_reports.append(
             {
                 "index": i,
@@ -132,6 +149,8 @@ def prove_blackwell_bundle(
         "gpu_profile": gpu_profile,
         "gpu_attested": bool(gpu_attestation and gpu_attestation.passed),
         "benchmark": benchmark,
+        "strict_validate": strict_validate,
+        "capture_ir": capture_ir,
     }
 
 
@@ -141,16 +160,25 @@ def prove_blackwell_trajectories(
     prompts_sha256: str,
     gpu_index: int = 0,
     benchmark: bool = False,
+    strict_validate: bool = False,
+    capture_ir: bool = False,
     attest_gpu: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any] | None]:
     """Validate in-memory trajectories (used right after generation)."""
+    strict_validate = strict_validate or _has_validation_stage(trajectories, "anti_cheat")
+    capture_ir = capture_ir or _has_validation_stage(trajectories, "ir_artifacts")
     gpu_profile = require_blackwell_gpu(gpu_index)
     gpu_attestation = attest_blackwell_gpu(gpu_profile=gpu_profile) if attest_gpu else None
 
     validator = TritonKernelValidator(gpu_index=gpu_index)
     verified: list[dict[str, Any]] = []
     for record in trajectories:
-        validation = validator.validate_response(record["response"], run_benchmark=benchmark)
+        validation = validator.validate_response(
+            record["response"],
+            run_benchmark=benchmark,
+            strict=strict_validate,
+            capture_ir=capture_ir,
+        )
         if validation["passed"]:
             stamped = dict(record)
             stamped["sparkproof_validation"] = validation

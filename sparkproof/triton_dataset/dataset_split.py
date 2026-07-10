@@ -86,11 +86,21 @@ def assign_splits(
     for group in ordered_groups:
         identities = sorted({split_group_key(record) for record in group})
         group_key = "component:" + hashlib.sha256("\n".join(identities).encode()).hexdigest()
-        split = _stable_bucket(group_key, dev_fraction=dev_fraction)
+        reserved_splits = {
+            str(record["split"])
+            for record in group
+            if respect_existing and record.get("split") in {"eval", "held_out"}
+        }
+        if len(reserved_splits) > 1:
+            raise ValueError(
+                f"split component {group_key} mixes reserved splits {sorted(reserved_splits)}"
+            )
+        split = (
+            next(iter(reserved_splits))
+            if reserved_splits
+            else _stable_bucket(group_key, dev_fraction=dev_fraction)
+        )
         for record in group:
-            if respect_existing and record.get("split") in {"eval", "held_out"}:
-                out.append(record)
-                continue
             record["split"] = split
             record["split_group"] = group_key
             out.append(record)

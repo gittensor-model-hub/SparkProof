@@ -16,6 +16,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gpu", type=int, default=0, help="CUDA device index (must be Blackwell)")
     parser.add_argument("--benchmark", action="store_true", help="require lightweight benchmark score floor")
     parser.add_argument(
+        "--strict-validate",
+        action="store_true",
+        help="run anti-cheat and adversarial multi-seed validation at the proving gate",
+    )
+    parser.add_argument(
+        "--capture-ir",
+        action="store_true",
+        help="capture TTIR/TTGIR/PTX artifacts during proving",
+    )
+    parser.add_argument(
         "--no-gpu-attest",
         action="store_true",
         help="skip NVIDIA GPU CC attestation (Blackwell validation only — not valid for production PRs)",
@@ -32,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
         args.bundle,
         gpu_index=args.gpu,
         benchmark=args.benchmark,
+        strict_validate=args.strict_validate,
+        capture_ir=args.capture_ir,
         attest_gpu=not args.no_gpu_attest,
         min_pass_rate=args.min_pass_rate,
     )
