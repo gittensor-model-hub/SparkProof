@@ -29,6 +29,14 @@ FAILURE_TEMPLATES: dict[str, str] = {
     "runtime_error": (
         "Write a robust {op} kernel with grid computed via tl.cdiv and boundary checks for arbitrary M,N."
     ),
+    "parse_error": (
+        "Write a complete, syntactically valid Triton 3.7.1 implementation of {op}. "
+        "Include imports, @triton.jit kernel, launcher, and executable torch.allclose test."
+    ),
+    "performance_regression": (
+        "Optimize a correct {op} Triton kernel for Blackwell SM12x. Add representative autotune configs, "
+        "preserve numerical correctness, and benchmark against the PyTorch reference."
+    ),
 }
 
 
@@ -73,6 +81,8 @@ def record_failure(
         "failure_stage": validation.get("fail_reason"),
         "failure_class": classify_failure(validation),
         "tags": [task.get("category") or "triton", task.get("task_family") or "kernel"],
+        "task_family": task.get("task_family"),
+        "category": task.get("category"),
         "gpu_arch": "blackwell",
         "triton_version": "3.7.1",
         "broken_code": extract_code(response),
@@ -87,11 +97,14 @@ def mine_failure_to_tasks(failure: dict[str, Any], *, n: int = 2) -> list[dict[s
 
     failure_class = failure.get("failure_class", "compile_error")
     template = FAILURE_TEMPLATES.get(failure_class, FAILURE_TEMPLATES["compile_error"])
-    op = (failure.get("tags") or ["softmax"])[0]
+    tags = failure.get("tags") or []
+    op = failure.get("task_family") or (tags[1] if len(tags) > 1 else None) or "kernel"
 
     tasks: list[dict[str, Any]] = []
     for i in range(n):
         prompt = template.format(op=op)
+        if i:
+            prompt += f" Use an additional adversarial shape variant #{i + 1} distinct from the parent failure."
         task = normalize_train_task(
             {
                 "task_id": f"mined_{failure.get('task_id', 'x')}_{failure_class}_{i}",

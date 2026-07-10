@@ -21,7 +21,7 @@ usage() {
   cat <<'EOF'
 usage: scripts/run_triton_pipeline.sh [options]
 
-  1. build_triton_prompts.sh  (api_doc + mutation + torch — no TritonBench yaml)
+  1. build_triton_prompts.sh  (api_doc + doc_semantics + doc_tutorial + mutation + torch — no TritonBench yaml)
   2. sparkproof-triton-generate (best-of-N + repair + Blackwell prove)
   3. sparkproof-verify
   4. teacher.format → SFT messages
@@ -84,6 +84,10 @@ allow_no_gpu_attest="${allow_no_gpu_attest:-false}"
 
 if [ -f .env ]; then set -a; source .env; set +a; fi
 export SPARKPROOF_BLACKWELL_PROFILE="${SPARKPROOF_BLACKWELL_PROFILE:-workstation}"
+if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -z "${YUNWU_API_KEY:-}" ]; then
+  echo "error: set OPENROUTER_API_KEY or YUNWU_API_KEY in .env" >&2
+  exit 1
+fi
 
 if [ ! -f "$prompts" ]; then
   echo ">>> building Triton prompts: $prompts"
@@ -92,7 +96,7 @@ if [ ! -f "$prompts" ]; then
   scripts/build_triton_prompts.sh "${build_args[@]}"
 fi
 
-gen_args=(--prompts "$prompts" --out "$bundle" --decontaminate)
+gen_args=(--prompts "$prompts" --out "$bundle" --decontaminate --run-id "$run_id")
 if [ -n "$limit" ]; then gen_args+=(--limit "$limit"); fi
 if [ "${#extra[@]}" -gt 0 ]; then gen_args+=("${extra[@]}"); fi
 
@@ -112,6 +116,11 @@ mkdir -p "$(dirname "$sft_out")"
 echo "wrote SFT: $sft_out"
 
 if [ -n "$publish_repo" ]; then
+  if [ -z "${HF_TOKEN:-}" ]; then
+    echo "error: HF_TOKEN is required for --publish" >&2
+    exit 1
+  fi
+  uv sync --extra publish --frozen
   echo ">>> publishing to HF: $publish_repo"
   pub_args=(--bundle "$bundle" --repo-id "$publish_repo")
   if [ "$release_gate" = true ]; then pub_args+=(--release-gate); fi

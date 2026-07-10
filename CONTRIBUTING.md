@@ -15,10 +15,14 @@ SparkProof is the **dataset provenance** companion to [SparkDistill](https://git
 cd SparkProof
 scripts/install.sh              # first boot only
 scripts/miner_run.sh --limit 2  # smoke test
+scripts/run_triton_pipeline.sh --limit 2  # required for triton_dataset changes
 
 uv sync --extra dev
 ruff check .
 pytest -q
+
+# Blackwell runner: execute all reference-kernel integration tests
+SPARKPROOF_RUN_GPU_TESTS=1 pytest -q tests/test_reference_kernels_gpu.py
 ```
 
 If you change verification rules or the OpenRouter request policy, run the full test suite and update `README.md`.

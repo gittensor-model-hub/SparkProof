@@ -10,17 +10,34 @@ from sparkproof.generate.gateway_client import generate_via_gateway, generation_
 from sparkproof.gateways import default_gateway, resolve_api_key
 from sparkproof.hashing import sha256_file
 from sparkproof.policy import SUPPORTED_PROVIDERS
+from sparkproof.triton_dataset.prompt_filters import prompt_matches_filters
+from sparkproof.triton_dataset.schema import PromptValidationError, validate_prompt_record
 
 
-def iter_prompts(path: Path, limit: int | None = None) -> Iterator[dict[str, Any]]:
+def iter_prompts(
+    path: Path,
+    limit: int | None = None,
+    *,
+    sources: frozenset[str] | None = None,
+    task_ids: frozenset[str] | None = None,
+) -> Iterator[dict[str, Any]]:
+    matched = 0
     with path.open() as f:
-        for i, line in enumerate(f):
+        for line_number, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
                 continue
-            if limit is not None and i >= limit:
+            try:
+                raw = json.loads(line)
+                record = validate_prompt_record(raw)
+            except (json.JSONDecodeError, PromptValidationError, ValueError) as exc:
+                raise ValueError(f"invalid prompt record at {path}:{line_number}: {exc}") from exc
+            if not prompt_matches_filters(record, sources=sources, task_ids=task_ids):
+                continue
+            yield record
+            matched += 1
+            if limit is not None and matched >= limit:
                 break
-            yield json.loads(line)
 
 
 def generate_trajectories(

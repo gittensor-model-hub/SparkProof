@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
 def _tritonbench_root() -> Path | None:
+    configured = os.environ.get("SPARKPROOF_TRITONBENCH_ROOT")
+    if configured:
+        path = Path(configured).expanduser()
+        return path if path.is_dir() else None
     sibling = Path(__file__).resolve().parents[2].parent / "SparkDistill" / "tritonbench"
     if sibling.exists():
         return sibling
@@ -54,7 +59,7 @@ def normalize_report(raw: dict[str, Any], *, run_id: str, model_name: str, split
         "run_id": run_id,
         "model": model_name,
         "split": split,
-        "timestamp": raw.get("timestamp") or datetime.utcnow().isoformat() + "Z",
+        "timestamp": raw.get("timestamp") or datetime.now(timezone.utc).isoformat(),
         "environment": _collect_environment(),
         "metrics": {
             "tasks_total": n,
@@ -86,13 +91,14 @@ class TritonBenchHarness:
         out_path: Path,
         config: str = "configs/eval_quick.yaml",
         levels: list[int] | None = None,
+        timeout_seconds: int = 3600,
     ) -> dict[str, Any]:
         if self.bench_root is None or not self.bench_root.exists():
             return {"status": "error", "message": "TritonBench root not found (expected SparkDistill/tritonbench)"}
 
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        run_id = f"tb_{datetime.utcnow():%Y%m%d_%H%M%S}"
+        run_id = f"tb_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}"
 
         cmd = [
             sys.executable,
@@ -118,12 +124,15 @@ class TritonBenchHarness:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=timeout_seconds,
             )
             if proc.returncode != 0:
                 return {
                     "status": "error",
                     "message": proc.stderr[-4000:] or proc.stdout[-4000:] or f"exit {proc.returncode}",
                 }
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "message": f"TritonBench timed out after {timeout_seconds}s"}
         except OSError as exc:
             return {"status": "error", "message": str(exc)}
 

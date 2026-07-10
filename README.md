@@ -76,9 +76,9 @@ Five prompt sources — **TritonBench YAML is eval-only** (never in training pro
 
 | Source | Module | Status |
 |--------|--------|--------|
-| A API docs | `triton_dataset/doc_chunks.py` | Registry fallback + optional `--doc-dir` markdown |
-| B Mutation | `triton_dataset/mutator.py` | vector_add, softmax + ground-truth kernels |
-| C Torch ops | `triton_dataset/torch_ops.py` | LayerNorm, GELU, RMSNorm, Softmax, Matmul, SiLU, LogSoftmax |
+| A API docs | `triton_dataset/doc_chunks.py` | Auto-fetch Triton docs → ~129 prompts — see [`docs/DOC_CHUNK_PROMPTS.md`](docs/DOC_CHUNK_PROMPTS.md) |
+| B Mutation | `triton_dataset/mutator.py` | 15 deterministic, syntax-safe variants across 6 reference kernels |
+| C Torch ops | `triton_dataset/torch_ops.py` | 17 PyTorch → Triton translation tasks |
 | D Self-evolution | `triton_dataset/self_evolve.py` | Deterministic ops over oracle-backed parents |
 | E Failure-mining | `triton_dataset/failure_miner.py` | Dev failures → new private tasks (never eval) |
 | Eval only | `eval_problems.py` + `eval_harness.py` | `sparkproof-eval-tritonbench` — isolated from dataset |
@@ -90,6 +90,7 @@ Release gate: `--release-gate` on `sparkproof-publish-dataset`.
 ```bash
 # Full Triton pipeline (prompts → best-of-N + repair → prove → verify → SFT → optional HF)
 scripts/run_triton_pipeline.sh --limit 2
+scripts/run_full_diverse.sh --run-id diverse-001 --train   # all doc + mutation + torch_op
 scripts/run_triton_pipeline.sh --run-id triton-cc-001 --publish your-org/sparkproof-triton-v1 --release-gate
 
 # TritonBench eval (held-out — results go outside training dirs)
@@ -100,7 +101,9 @@ uv run sparkproof-eval-tritonbench \
 
 # Step by step
 scripts/build_triton_prompts.sh --out prompts/triton.jsonl
+scripts/run_doc_qwen.sh --run-id doc-full-001          # doc-only: api + semantics + tutorials
 uv run sparkproof-triton-generate --prompts prompts/triton.jsonl --out bundles/run-001 --decontaminate --orchestrate
+scripts/build_next_round.sh --bundle bundles/run-001 --out prompts/round-2.jsonl
 uv run sparkproof-publish-dataset --bundle bundles/run-001 --repo-id your-org/dataset --release-gate
 ```
 

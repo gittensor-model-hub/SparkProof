@@ -3,23 +3,64 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import datetime
+import json
 import sys
 from pathlib import Path
 
-from sparkproof.triton_dataset.build_prompts import build_prompts_file
+from sparkproof.triton_dataset.build_prompts import (
+    DEFAULT_TRAIN_SOURCES_STR,
+    build_prompts_file,
+)
+from sparkproof.triton_dataset.prompt_filters import parse_filter_set
+from sparkproof.hashing import sha256_file
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True, help="output prompts.jsonl")
-    parser.add_argument("--doc-dir", type=Path, default=None, help="optional Triton markdown docs tree")
+    parser.add_argument("--report", type=Path, default=None, help="build report JSON path")
+    parser.add_argument(
+        "--doc-dir",
+        type=Path,
+        default=None,
+        help="optional local Triton docs clone; otherwise auto-fetch triton.language.rst",
+    )
+    parser.add_argument(
+        "--no-fetch-docs",
+        action="store_true",
+        help="do not download triton.language.rst (use --doc-dir, cache, or registry fallback)",
+    )
+    parser.add_argument(
+        "--no-enrich-api-pages",
+        action="store_true",
+        help="skip Sphinx API page enrichment for api_doc symbols (Option B)",
+    )
+    parser.add_argument(
+        "--allow-partial-docs",
+        action="store_true",
+        help="development only: permit missing/truncated pinned documentation sources",
+    )
     parser.add_argument("--mined-prompts", type=Path, default=None, help="failure-mined tasks jsonl")
     parser.add_argument("--evolved-prompts", type=Path, default=None, help="self-evolved tasks jsonl")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
+        "--source",
+        dest="filter_sources",
+        action="append",
+        help="only include prompts with this source (repeatable)",
+    )
+    parser.add_argument(
+        "--task-id",
+        dest="filter_task_ids",
+        action="append",
+        help="only include prompts with this task_id (repeatable)",
+    )
+    parser.add_argument(
         "--sources",
-        default="api_doc,mutation,torch_op",
-        help="comma-separated: api_doc,mutation,torch_op,failure_mining,self_evolution",
+        default=DEFAULT_TRAIN_SOURCES_STR,
+        help="comma-separated: api_doc,doc_semantics,doc_tutorial,mutation,torch_op,failure_mining,self_evolution",
     )
     args = parser.parse_args(argv)
 
@@ -31,8 +72,34 @@ def main(argv: list[str] | None = None) -> int:
         evolved_prompts_path=args.evolved_prompts,
         limit=args.limit,
         sources=sources,
+        auto_fetch_docs=not args.no_fetch_docs,
+        enrich_api_pages=False if args.no_enrich_api_pages else None,
+        strict_docs=not args.allow_partial_docs,
+        filter_sources=parse_filter_set(args.filter_sources),
+        filter_task_ids=parse_filter_set(args.filter_task_ids),
     )
+    report_path = args.report or args.out.with_suffix(".report.json")
+    source_counts: Counter[str] = Counter()
+    category_counts: Counter[str] = Counter()
+    with args.out.open(encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            source_counts[record["source"]] += 1
+            category_counts[record["category"]] += 1
+    report = {
+        "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
+        "prompts_path": str(args.out),
+        "prompts_sha256": sha256_file(str(args.out)),
+        "total": count,
+        "sources": dict(sorted(source_counts.items())),
+        "categories": dict(sorted(category_counts.items())),
+        "strict_docs": not args.allow_partial_docs,
+    }
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {count} Triton prompts to {args.out}", file=sys.stderr)
+    print(f"build report: {report_path}", file=sys.stderr)
     return 0
 
 

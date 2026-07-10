@@ -38,6 +38,7 @@ sparkproof-triton-generate = "sparkproof.cli.triton_generate:main"
 sparkproof-publish-dataset = "sparkproof.cli.publish_dataset:main"
 sparkproof-eval-tritonbench = "sparkproof.cli.eval_tritonbench:main"
 sparkproof-yunwu-probe = "sparkproof.cli.yunwu_probe:main"
+sparkproof-summarize-bundle = "sparkproof.cli.summarize_bundle:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -54,6 +55,9 @@ packages = ["sparkproof"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "gpu: requires a configured Blackwell GPU and Triton runtime",
+]
 
 [tool.ruff]
 line-length = 120

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import yaml
 
@@ -20,8 +21,12 @@ SYSTEM = (
 
 
 def _problems_root(explicit: Path | None) -> Path | None:
-    if explicit is not None and explicit.exists():
-        return explicit
+    if explicit is not None:
+        return explicit if explicit.is_dir() else None
+    configured = os.environ.get("SPARKPROOF_TRITONBENCH_PROBLEMS")
+    if configured:
+        path = Path(configured).expanduser()
+        return path if path.is_dir() else None
     sibling = Path(__file__).resolve().parents[2].parent / "SparkDistill" / "tritonbench" / "tritonbench" / "problems"
     if sibling.exists():
         return sibling
@@ -38,7 +43,7 @@ def iter_yaml_problem_prompts(
     if root is None:
         return []
 
-    levels = levels or [1]
+    levels = levels or [1, 2, 3, 4]
     out: list[dict] = []
 
     for level in levels:
@@ -65,12 +70,27 @@ def iter_yaml_problem_prompts(
 
 
 def _yaml_to_record(prob: dict, stem: str, level: object) -> dict:
-    return {
+    category = prob.get("category", "kernel_generation")
+    task_family = prob.get("task_family") or prob.get("op")
+    if not task_family:
+        task_family = prob.get("title") or (category if category != "kernel_generation" else stem)
+    record = {
         "task_id": prob.get("id", stem),
         "source": "yaml",
-        "category": prob.get("category", "kernel_generation"),
+        "category": category,
+        "task_family": str(task_family).strip().lower().replace(" ", "_"),
         "prompt": prob["prompt"].strip(),
         "system": SYSTEM,
         "level": level,
         "title": prob.get("title", stem),
     }
+    input_code = prob.get("input_code")
+    if input_code:
+        record["broken_code"] = str(input_code)
+    reference = prob.get("ground_truth_code") or prob.get("solution_code") or prob.get("reference_code")
+    if reference:
+        record["ground_truth_code"] = str(reference)
+    for key in ("dtype", "shape_class", "layout"):
+        if prob.get(key) is not None:
+            record[key] = prob[key]
+    return record

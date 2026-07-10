@@ -18,6 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default="configs/eval_quick.yaml")
     parser.add_argument("--levels", nargs="+", type=int, default=None)
     parser.add_argument("--bench-root", type=Path, default=None, help="SparkDistill/tritonbench root")
+    parser.add_argument("--timeout", type=int, default=3600, help="evaluation timeout in seconds")
     args = parser.parse_args(argv)
 
     harness = TritonBenchHarness(bench_root=args.bench_root)
@@ -27,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
         out_path=args.out,
         config=args.config,
         levels=args.levels,
+        timeout_seconds=args.timeout,
     )
     if report.get("status") == "error":
         print(report.get("message", "eval failed"), file=sys.stderr)

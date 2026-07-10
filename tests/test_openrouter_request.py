@@ -1,6 +1,6 @@
 import pytest
 
-from sparkproof.openrouter_request import build_chat_body, request_sha256, verify_request_sha256
+from sparkproof.openrouter_request import build_chat_body, verify_request_sha256
 from sparkproof.policy import REQUIRED_REASONING_EFFORT, allowed_teachers_manifest
 from tests.conftest_helpers import TEST_GEN_CONFIG, make_trajectory
 

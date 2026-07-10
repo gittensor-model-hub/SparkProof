@@ -42,6 +42,4 @@ def is_evolution_parent_allowed(parent: dict[str, Any]) -> bool:
         assert_trainable_task(parent)
     except ValueError:
         return False
-    if not parent.get("reference_expr") and not parent.get("torch_reference") and not parent.get("ground_truth_code"):
-        return False
-    return True
+    return bool(parent.get("prompt"))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import random
 from typing import Any
 
@@ -77,7 +78,11 @@ def apply_evolution(parent: dict[str, Any], operation: str) -> dict[str, Any] | 
 
 def evolve_parent(parent: dict[str, Any], *, depth: int = 1, rng: random.Random | None = None) -> list[dict[str, Any]]:
     """Apply up to `depth` distinct evolution ops (deterministic sampling)."""
-    r = rng or random.Random()
+    if depth < 0:
+        raise ValueError("depth must be non-negative")
+    parent_id = str(parent.get("task_id", "parent"))
+    stable_seed = int(hashlib.sha256(parent_id.encode()).hexdigest(), 16)
+    r = rng or random.Random(stable_seed)
     ops = r.sample(list(EVOLUTION_OPS), k=min(depth, len(EVOLUTION_OPS)))
     children: list[dict[str, Any]] = []
     for op in ops:

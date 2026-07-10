@@ -25,8 +25,8 @@ def check_trajectory_row(traj: dict[str, Any], decon: TritonDecontaminator) -> l
         issues.append("eval split")
     issues.extend(decon.check_task(meta))
     validation = traj.get("sparkproof_validation") or {}
-    if validation and not validation.get("passed"):
-        issues.append("validation not passed")
+    if validation.get("passed") is not True:
+        issues.append("missing or failed sparkproof validation")
     code = extract_python_from_response(traj.get("response", ""))
     if decon.is_contaminated_code(code):
         issues.append("code structure matches eval benchmark")
@@ -71,15 +71,31 @@ def build_manifest(
     return manifest
 
 
-def run_release_gate(bundle_dir: Path, *, dataset_version: str = "triton-distill-v0.2") -> dict[str, Any]:
+def run_release_gate(
+    bundle_dir: Path,
+    *,
+    dataset_version: str = "triton-distill-v0.2",
+    problems_dir: Path | None = None,
+    benchmark_py_dir: Path | None = None,
+) -> dict[str, Any]:
     from sparkproof.publish.hf_dataset import load_trajectories_jsonl
+    from sparkproof.verify import verify_bundle
+
+    verification = verify_bundle(bundle_dir, require_gpu_attestation=True)
+    if not verification.get("verified"):
+        issues = verification.get("issues") or ["bundle verification failed"]
+        raise ValueError(f"release gate requires a valid GPU-attested sparkproof-2 bundle: {issues}")
 
     traj_path = bundle_dir / "trajectories.jsonl"
     if not traj_path.exists():
         raise FileNotFoundError(traj_path)
 
     trajectories = load_trajectories_jsonl(traj_path)
-    decon = TritonDecontaminator()
+    decon = TritonDecontaminator(
+        problems_dir=problems_dir,
+        benchmark_py_dir=benchmark_py_dir,
+        require_eval_corpus=True,
+    )
     blocked: list[dict[str, Any]] = []
     for i, traj in enumerate(trajectories):
         issues = check_trajectory_row(traj, decon)

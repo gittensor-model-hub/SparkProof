@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -12,41 +13,37 @@ from typing import Any
 from sparkproof.triton_dataset.task_policy import FORBIDDEN_TRAINING_ORIGINS, assert_trainable_task
 
 
-class TritonASTHasher(ast.NodeVisitor):
-    """Canonical structural fingerprint (names stripped)."""
+class TritonASTCanonicalizer(ast.NodeTransformer):
+    """Strip user-defined names while preserving operators, control flow, and Triton APIs."""
 
-    def __init__(self) -> None:
-        self.struct_lines: list[str] = []
+    _PRESERVED_NAMES = frozenset({"tl", "triton", "torch"})
 
-    def visit_Name(self, node: ast.Name) -> None:
-        self.struct_lines.append("Name")
-        self.generic_visit(node)
+    def visit_Name(self, node: ast.Name) -> ast.Name:
+        if node.id not in self._PRESERVED_NAMES and node.id not in {"True", "False", "None"}:
+            node.id = "_"
+        return node
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self.struct_lines.append(f"FuncDef(args={len(node.args.args)})")
-        self.generic_visit(node)
+    def visit_arg(self, node: ast.arg) -> ast.arg:
+        node.arg = "_"
+        return node
 
-    def visit_Call(self, node: ast.Call) -> None:
-        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-            if node.func.value.id == "tl":
-                self.struct_lines.append(f"Call:tl.{node.func.attr}")
-            elif node.func.value.id == "triton":
-                self.struct_lines.append(f"Call:triton.{node.func.attr}")
-            else:
-                self.struct_lines.append("Call")
-        else:
-            self.struct_lines.append("Call")
-        self.generic_visit(node)
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        node.name = "_"
+        return self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
+        node.name = "_"
+        return self.generic_visit(node)
 
 
 def get_canonical_structure(code: str) -> str:
     try:
         tree = ast.parse(code)
-        hasher = TritonASTHasher()
-        hasher.visit(tree)
-        return "\n".join(hasher.struct_lines)
+        canonical = TritonASTCanonicalizer().visit(tree)
+        ast.fix_missing_locations(canonical)
+        return ast.dump(canonical, annotate_fields=True, include_attributes=False)
     except SyntaxError:
-        return hashlib.sha256(code.encode()).hexdigest()
+        return f"syntax-error:{hashlib.sha256(code.encode()).hexdigest()}"
 
 
 def text_fingerprint(text: str) -> str:
@@ -79,13 +76,36 @@ def extract_python_from_response(response: str) -> str:
 class TritonDecontaminator:
     """Pre-load eval fingerprints; reject training rows that overlap."""
 
-    def __init__(self, *, problems_dir: Path | None = None, benchmark_py_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        problems_dir: Path | None = None,
+        benchmark_py_dir: Path | None = None,
+        require_eval_corpus: bool = False,
+    ) -> None:
         self.structures: set[str] = set()
         self.prompt_hashes: set[str] = set()
         self.semantic_hashes: set[str] = set()
         self._load_eval_yaml(problems_dir)
+        if benchmark_py_dir is None:
+            configured_py_dir = os.environ.get("SPARKPROOF_TRITONBENCH_PY_DIR")
+            if configured_py_dir:
+                benchmark_py_dir = Path(configured_py_dir).expanduser()
         if benchmark_py_dir and benchmark_py_dir.exists():
             self._load_py_tree(benchmark_py_dir)
+        if require_eval_corpus and not self.prompt_hashes:
+            raise RuntimeError(
+                "decontamination requires a TritonBench problem corpus; pass problems_dir "
+                "or set SPARKPROOF_TRITONBENCH_PROBLEMS"
+            )
+
+    @property
+    def fingerprint_counts(self) -> dict[str, int]:
+        return {
+            "prompts": len(self.prompt_hashes),
+            "semantics": len(self.semantic_hashes),
+            "structures": len(self.structures),
+        }
 
     def _load_eval_yaml(self, problems_dir: Path | None) -> None:
         from sparkproof.triton_dataset.eval_problems import iter_eval_problem_prompts
@@ -138,8 +158,16 @@ class TritonDecontaminator:
         return kept
 
 
-def filter_decontaminated(records: list[dict[str, Any]], problems_dir: Path | None = None) -> list[dict[str, Any]]:
-    return TritonDecontaminator(problems_dir=problems_dir).filter_trajectories(records)
+def filter_decontaminated(
+    records: list[dict[str, Any]],
+    problems_dir: Path | None = None,
+    *,
+    require_eval_corpus: bool = True,
+) -> list[dict[str, Any]]:
+    return TritonDecontaminator(
+        problems_dir=problems_dir,
+        require_eval_corpus=require_eval_corpus,
+    ).filter_trajectories(records)
 
 
 def assert_trainable_prompt_record(record: dict[str, Any]) -> None:

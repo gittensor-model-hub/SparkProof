@@ -15,14 +15,40 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--repo-id", required=True, help="HF datasets repo id")
     parser.add_argument("--private", action="store_true")
-    parser.add_argument("--release-gate", action="store_true", help="run decontamination + provenance gate before publish")
+    parser.add_argument(
+        "--skip-release-gate",
+        action="store_true",
+        help="development only: publish without decontamination and provenance checks",
+    )
+    parser.add_argument("--release-gate", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--problems-dir",
+        type=Path,
+        default=None,
+        help="TritonBench problems directory used by the release gate",
+    )
+    parser.add_argument(
+        "--benchmark-py-dir",
+        type=Path,
+        default=None,
+        help="optional held-out benchmark Python tree for structural fingerprints",
+    )
     parser.add_argument("--dataset-version", default="triton-distill-v0.2")
     args = parser.parse_args(argv)
 
-    if args.release_gate:
-        run_release_gate(args.bundle, dataset_version=args.dataset_version)
+    try:
+        if not args.skip_release_gate:
+            run_release_gate(
+                args.bundle,
+                dataset_version=args.dataset_version,
+                problems_dir=args.problems_dir,
+                benchmark_py_dir=args.benchmark_py_dir,
+            )
 
-    url = publish_bundle_to_hf(bundle_dir=args.bundle, repo_id=args.repo_id, private=args.private)
+        url = publish_bundle_to_hf(bundle_dir=args.bundle, repo_id=args.repo_id, private=args.private)
+    except (FileNotFoundError, ImportError, RuntimeError, ValueError) as exc:
+        print(f"publish failed: {exc}", file=sys.stderr)
+        return 1
     print(url)
     return 0
 

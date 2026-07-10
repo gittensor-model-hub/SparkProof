@@ -35,9 +35,9 @@ def run_dataset_generation_step(
     task = normalize_train_task(base_task)
     assert_trainable_task(task)
 
-    evolved_tasks = evolve_parent(task, depth=evolve_depth) if evolve_depth else [task]
-    if not evolved_tasks:
-        evolved_tasks = [task]
+    evolved_tasks = [task]
+    if evolve_depth:
+        evolved_tasks.extend(evolve_parent(task, depth=evolve_depth))
 
     results: list[dict[str, Any]] = []
     for evolved in evolved_tasks:
@@ -58,7 +58,7 @@ def run_dataset_generation_step(
                 {
                     "task_id": evolved["task_id"],
                     "status": "accepted",
-                    "trajectory": outcome,
+                    "trajectory": outcome["trajectory"],
                     "tier": outcome.get("tier", "gold"),
                 }
             )

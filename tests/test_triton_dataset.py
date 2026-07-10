@@ -1,9 +1,9 @@
 from sparkproof.triton_dataset.build_prompts import iter_all_prompts
-from sparkproof.triton_dataset.decontaminate import get_canonical_structure, semantic_task_fingerprint, text_fingerprint
+from sparkproof.triton_dataset.decontaminate import get_canonical_structure, semantic_task_fingerprint
 from sparkproof.triton_dataset.eval_problems import iter_eval_problem_prompts
 from sparkproof.triton_dataset.failure_miner import classify_failure, mine_failure_to_tasks
 from sparkproof.triton_dataset.mutator import strip_boundary_mask
-from sparkproof.triton_dataset.self_evolve import apply_evolution, evolve_parent
+from sparkproof.triton_dataset.self_evolve import evolve_parent
 from sparkproof.triton_dataset.task_policy import assert_trainable_task
 
 
@@ -13,8 +13,18 @@ def test_build_prompts_excludes_yaml_by_default():
     assert "yaml" not in sources
     assert "mutation" in sources
     assert "torch_op" in sources
+    assert len([r for r in records if r["source"] == "mutation"]) == 15
+    assert len([r for r in records if r["source"] == "torch_op"]) == 17
     assert all("prompt" in r and "system" in r for r in records)
     assert all(r.get("split") == "train" for r in records)
+
+
+def test_default_train_sources_include_all_doc_kinds():
+    from sparkproof.triton_dataset.build_prompts import DEFAULT_TRAIN_SOURCES
+
+    assert DEFAULT_TRAIN_SOURCES == frozenset(
+        {"api_doc", "doc_semantics", "doc_tutorial", "mutation", "torch_op"}
+    )
 
 
 def test_mutator_strips_mask():

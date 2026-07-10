@@ -48,6 +48,68 @@ TORCH_OPS = [
         "shapes": {"x": "(M, N)"},
         "task_family": "silu",
     },
+    {
+        "name": "ReLU",
+        "code": "torch.nn.functional.relu(x)",
+        "shapes": {"x": "(M, N)"},
+        "task_family": "relu",
+    },
+    {
+        "name": "LeakyReLU",
+        "code": "torch.nn.functional.leaky_relu(x, negative_slope=0.01)",
+        "shapes": {"x": "(M, N)"},
+        "task_family": "leaky_relu",
+    },
+    {
+        "name": "Softplus",
+        "code": "torch.nn.functional.softplus(x)",
+        "shapes": {"x": "(M, N)"},
+        "task_family": "softplus",
+    },
+    {
+        "name": "Sigmoid",
+        "code": "torch.sigmoid(x)",
+        "shapes": {"x": "(M, N)"},
+        "task_family": "sigmoid",
+    },
+    {
+        "name": "Tanh",
+        "code": "torch.tanh(x)",
+        "shapes": {"x": "(M, N)"},
+        "task_family": "tanh",
+    },
+    {
+        "name": "ReduceSum",
+        "code": "x.sum(dim=-1)",
+        "shapes": {"x": "(M, N)"},
+        "task_family": "reduce_sum",
+        "shape_class": "M_x_tail_N",
+    },
+    {
+        "name": "ReduceMean",
+        "code": "x.mean(dim=-1)",
+        "shapes": {"x": "(M, N)"},
+        "task_family": "reduce_mean",
+        "shape_class": "M_x_tail_N",
+    },
+    {
+        "name": "Clamp",
+        "code": "torch.clamp(x, min=-1.0, max=1.0)",
+        "shapes": {"x": "(M, N)"},
+        "task_family": "clamp",
+    },
+    {
+        "name": "Abs",
+        "code": "torch.abs(x)",
+        "shapes": {"x": "(M, N)"},
+        "task_family": "abs",
+    },
+    {
+        "name": "SquaredDiff",
+        "code": "(a - b).pow(2)",
+        "shapes": {"a": "(M, N)", "b": "(M, N)"},
+        "task_family": "squared_diff",
+    },
 ]
 
 
@@ -62,7 +124,9 @@ Requirements:
 2. Boundary masks on tl.load/tl.store where needed
 3. fp32 accumulator for reductions
 4. Self-contained test with torch.allclose at the end
-5. Print SPARKPROOF_TRITON_PASS after successful test"""
+5. Instantiate symbolic dimensions with concrete adversarial sizes; use a non-power-of-two tail such as 1003
+6. Test float32 and float16 inputs (and state justified tolerances)
+7. Print SPARKPROOF_TRITON_PASS after successful test"""
     return {
         "task_id": f"translate_{op['name'].lower()}",
         "source": "torch_op",

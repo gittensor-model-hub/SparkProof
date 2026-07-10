@@ -115,7 +115,9 @@ def generate_with_repair(
             tier = assign_tier(validation, repairs_used=repairs)
             stamped.setdefault("metadata", {})
             stamped["metadata"]["tier"] = tier
-            score = acceptance_score(validation, output_tokens=len(record.get("response", "")))
+            usage = (record.get("metadata") or {}).get("usage") or {}
+            output_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+            score = acceptance_score(validation, output_tokens=output_tokens)
             return CandidateResult(
                 provider=provider,
                 record=stamped,
