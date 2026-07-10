@@ -1,8 +1,21 @@
-# SparkProof
+# _SP⚡RKPROOF_
 
-**Blackwell GPU–verified Triton dataset generation for [SparkDistill](https://github.com/gittensor-ai-lab/sparkdistill).**
+**Blackwell GPU–verified Triton dataset generation for [SPARKDISTILL](https://github.com/gittensor-model-hub/SparkDistill).**
 
-Run entirely on your **RTX PRO 6000 Blackwell CC VM** — no Polaris, no CPU TDX. SparkProof:
+**SPARKPROOF** is the dataset-provenance companion to
+[`SparkDistill`](https://github.com/gittensor-model-hub/SparkDistill): it generates the
+teacher trajectories SPARKDISTILL trains on, then proves — with GPU confidential-computing
+attestation and a Merkle root over verified samples — that every kept sample actually
+compiled and executed on an attested Blackwell GPU, not just that a teacher model emitted
+plausible-looking text.
+
+## Why SPARKPROOF
+
+A distillation dataset is only as trustworthy as its provenance. SPARKPROOF's goal is
+**verifiable data provenance**: prove a training sample was produced by a pinned teacher
+model, at a pinned reasoning effort, and — for code — actually validated by running it, not
+just accepted on the teacher's word. Run entirely on your **RTX PRO 6000 Blackwell CC VM** —
+no Polaris, no CPU TDX:
 
 1. Calls teachers via **OpenRouter** (`reasoning.effort: xhigh`)
 2. **Compiles and executes** Triton 3.7.1 kernels on Blackwell
@@ -15,13 +28,22 @@ Run entirely on your **RTX PRO 6000 Blackwell CC VM** — no Polaris, no CPU TDX
 
 Set `SPARKPROOF_GATEWAY=yunwu` or pass `--gateway yunwu` to `sparkproof-generate` / `miner_run.sh`.
 
+## Layout
+
+| Path | What |
+|---|---|
+| [`sparkproof/`](sparkproof) | gateway clients, GPU attestation, manifest/Merkle verification, Triton dataset pipeline |
+| [`scripts/`](scripts) | one-command install/generate/verify/pipeline entry points |
+| [`policies/`](policies) | pinned teacher + GPU policy (`gpu_remote_v3.json`) |
+| [`tests/`](tests) | manifest, Merkle, policy, and gateway unit tests |
+
 ## CC VM quickstart (one command)
 
 ```bash
 ssh -p 20002 ubuntu@<cc-host>
 
-git clone <sparkproof-url> SparkProof
-git clone <sparkdistill-url> SparkDistill   # sibling directory
+git clone https://github.com/gittensor-model-hub/SparkProof.git SparkProof
+git clone https://github.com/gittensor-model-hub/SparkDistill.git SparkDistill   # sibling directory
 
 cd SparkProof
 cp .env.example .env   # OPENROUTER_API_KEY only
@@ -84,6 +106,7 @@ uv run sparkproof-publish-dataset --bundle bundles/run-001 --repo-id your-org/da
 
 Multi-candidate uses **yunwu/openrouter** gateways (Fable 5 + GPT 5.6 xhigh), not raw OpenAI/Anthropic SDKs.
 
+What a verified sample proves:
 
 - OpenRouter calls with pinned slugs + **`reasoning.effort: xhigh`** (`request_sha256` replay)
 - Each kept sample passed Triton validation **on the attested Blackwell GPU**
@@ -116,6 +139,11 @@ bundles/<run-id>/
 - **Software:** `torch>=2.6`, `triton==3.7.1`, `nv-attestation-sdk` for GPU CC
 - **Secrets:** `OPENROUTER_API_KEY` and/or `YUNWU_API_KEY` (see `SPARKPROOF_GATEWAY`)
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the pinned-teacher/gateway policy and the
+legal and terms-of-service gate that applies to every published bundle.
+
 ## License
 
-MIT — see [CONTRIBUTING.md](CONTRIBUTING.md).
+MIT, see [`LICENSE`](LICENSE).

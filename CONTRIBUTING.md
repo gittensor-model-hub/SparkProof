@@ -1,6 +1,6 @@
 # Contributing to SparkProof
 
-SparkProof is the **dataset provenance** companion to [SparkDistill](https://github.com/gittensor-ai-lab/sparkdistill). Contributions here improve attested trajectory generation, verification, and bundle tooling — not model weights.
+SparkProof is the **dataset provenance** companion to [SparkDistill](https://github.com/gittensor-model-hub/SparkDistill). Contributions here improve attested trajectory generation, verification, and bundle tooling — not model weights.
 
 ## Principles
 

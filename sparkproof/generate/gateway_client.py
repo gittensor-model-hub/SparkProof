@@ -27,7 +27,7 @@ def _post_chat(
         "Accept": "application/json",
     }
     if gateway == GATEWAY_OPENROUTER:
-        headers["HTTP-Referer"] = "https://github.com/gittensor-ai-lab/sparkproof"
+        headers["HTTP-Referer"] = "https://github.com/gittensor-model-hub/SparkProof"
         headers["X-OpenRouter-Title"] = "SparkProof"
 
     data = json.dumps(body).encode("utf-8")
