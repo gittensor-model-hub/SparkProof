@@ -175,7 +175,10 @@ def generate_best_of_n(
     validator = validator or TritonKernelValidator(gpu_index=gpu_index)
     prompt = prompt_record["prompt"]
     system = prompt_record.get("system")
-    meta = {k: prompt_record[k] for k in prompt_record if k not in {"prompt", "system"}}
+    # Keep the original (pre-repair) prompt in metadata so checkpoint-based
+    # recovery (dpo_export.enrich_adjudication_with_responses) can backfill
+    # it later; per-attempt repair prompts never overwrite this copy.
+    meta = {k: prompt_record[k] for k in prompt_record if k != "system"}
 
     candidates: list[CandidateResult] = []
     for provider in providers:

@@ -20,7 +20,7 @@ from sparkproof.triton_dataset.dataset_split import assign_splits, split_group_k
 from sparkproof.triton_dataset.dpo_export import enrich_adjudication_with_responses, export_dpo_jsonl
 from sparkproof.triton_dataset.error_capture import capture_execution_error
 from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
-from sparkproof.triton_dataset.multi_candidate import _client_value
+from sparkproof.triton_dataset.multi_candidate import _client_value, generate_best_of_n
 from sparkproof.triton_dataset.python_runner import PythonExecution
 from sparkproof.triton_dataset.prompt_templates import apply_prompt_template, wrap_prompt
 from sparkproof.triton_dataset.torch_ops import iter_torch_translation_prompts
@@ -382,6 +382,37 @@ def test_error_capture_fails_before_subprocess_without_blackwell(monkeypatch):
     monkeypatch.setattr("sparkproof.triton_dataset.error_capture.require_blackwell_gpu", unavailable)
     with pytest.raises(RuntimeError, match="Blackwell GPU required"):
         capture_execution_error("print('SPARKPROOF_TRITON_PASS')")
+
+
+def test_error_capture_classifies_timeout_as_runtime_error(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return PythonExecution(returncode=-1, stdout="", stderr="TIMEOUT", timed_out=True)
+
+    monkeypatch.setattr("sparkproof.triton_dataset.error_capture.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton_dataset.error_capture.run_python_source", fake_run)
+    result = capture_execution_error("print('SPARKPROOF_TRITON_PASS')")
+    assert result["passed"] is False
+    assert result["failure_class"] == "runtime_error"
+
+
+def test_generate_best_of_n_preserves_original_prompt_for_checkpoint_recovery(monkeypatch):
+    def fake_generate(*, prompt, **kwargs):
+        return {"response": "```python\nprint('SPARKPROOF_TRITON_PASS')\n```"}
+
+    class FakeValidator:
+        def validate_response(self, response, **kwargs):
+            return {"passed": True, "stages": {}}
+
+    monkeypatch.setattr("sparkproof.triton_dataset.multi_candidate.generate_via_gateway", fake_generate)
+    _, candidates = generate_best_of_n(
+        gateway="openrouter",
+        api_key="key",
+        prompt_record={"task_id": "t1", "prompt": "original prompt", "source": "torch_op"},
+        providers=["anthropic"],
+        validator=FakeValidator(),
+    )
+    prompt_meta = candidates[0].record["metadata"]["prompt_meta"]
+    assert prompt_meta["prompt"] == "original prompt"
 
 
 def test_client_value_supports_dicts_and_objects():

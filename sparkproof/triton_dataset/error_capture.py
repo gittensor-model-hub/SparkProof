@@ -36,6 +36,13 @@ except Exception as e:
     sys.exit(1)
 """
     execution = run_python_source(wrapped, gpu_index=gpu_index, timeout=timeout)
+    if execution.timed_out:
+        return {
+            "passed": False,
+            "output_tail": "TIMEOUT",
+            "failure_class": "runtime_error",
+            "returncode": execution.returncode,
+        }
     output = execution.output
     passed = "SPARKPROOF_TRITON_PASS" in execution.stdout and execution.returncode == 0
     validation = {
