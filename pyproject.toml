@@ -1,0 +1,60 @@
+[project]
+name = "sparkproof"
+version = "0.1.0"
+description = "Blackwell GPU-attested Triton dataset generation for SparkDistill (Fable 5 + GPT 5.6 via OpenRouter)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=43.0.0",
+    "pyyaml>=6.0.0",
+]
+
+[project.optional-dependencies]
+blackwell = [
+    "numpy>=2.0.0",
+    "torch>=2.6.0",
+    "triton==3.7.1",
+]
+gpu = [
+    "nv-attestation-sdk==2.7.3",
+    "pyjwt>=2.0.0",
+]
+publish = [
+    "datasets>=3.0.0",
+    "huggingface_hub>=0.26.0",
+]
+dev = [
+    "pytest>=9.0.0",
+    "ruff>=0.15.0",
+]
+
+[project.scripts]
+sparkproof-generate = "sparkproof.cli.generate:main"
+sparkproof-prove = "sparkproof.cli.prove:main"
+sparkproof-verify = "sparkproof.cli.verify:main"
+sparkproof-build-prompts = "sparkproof.cli.build_prompts:main"
+sparkproof-triton-generate = "sparkproof.cli.triton_generate:main"
+sparkproof-publish-dataset = "sparkproof.cli.publish_dataset:main"
+sparkproof-eval-tritonbench = "sparkproof.cli.eval_tritonbench:main"
+sparkproof-yunwu-probe = "sparkproof.cli.yunwu_probe:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+# nv-attestation-sdk leaks pytest==8.1.1 into requires_dist — override to match dev extra.
+override-dependencies = ["pytest==9.0.3"]
+# Managed CPython includes Python.h — required for Triton JIT without apt python3-dev.
+python-preference = "managed"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sparkproof"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"

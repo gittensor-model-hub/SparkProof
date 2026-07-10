@@ -1,0 +1,11 @@
+from sparkproof.policy import (
+    ANTHROPIC_TEACHER_MODEL,
+    GENERATOR_VERSION,
+    OPENAI_TEACHER_MODEL,
+)
+
+__all__ = [
+    "ANTHROPIC_TEACHER_MODEL",
+    "GENERATOR_VERSION",
+    "OPENAI_TEACHER_MODEL",
+]
