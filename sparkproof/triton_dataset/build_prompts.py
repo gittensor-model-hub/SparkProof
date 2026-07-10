@@ -15,11 +15,13 @@ from sparkproof.triton_dataset.doc_chunks import (
     load_doc_chunks,
     prompt_from_doc_chunk,
 )
-from sparkproof.triton_dataset.mutator import iter_mutation_prompts
+from sparkproof.triton_dataset.error_capture import enrich_mutation_prompt
+from sparkproof.triton_dataset.prompt_templates import apply_prompt_template
 from sparkproof.triton_dataset.prompt_filters import prompt_matches_filters
 from sparkproof.triton_dataset.reference_kernels import REFERENCE_KERNELS
 from sparkproof.triton_dataset.schema import validate_prompt_record
 from sparkproof.triton_dataset.task_policy import normalize_train_task
+from sparkproof.triton_dataset.mutator import iter_mutation_prompts
 from sparkproof.triton_dataset.torch_ops import iter_torch_translation_prompts
 
 DEFAULT_SYSTEM = (
@@ -60,10 +62,14 @@ def _finalize(record: dict[str, Any]) -> dict[str, Any]:
         "mutation_reason",
         "torch_reference",
         "reference_expr",
+        "shape_class",
         "doc_chunk_id",
         "level",
         "title",
         "task_family",
+        "prompt_template",
+        "captured_error",
+        "captured_failure_class",
         "parent_id",
         "evolution_ops",
     ):
@@ -105,6 +111,10 @@ def iter_all_prompts(
     auto_fetch_docs: bool = True,
     enrich_api_pages: bool | None = None,
     strict_docs: bool = False,
+    capture_mutation_errors: bool = False,
+    apply_templates: bool = False,
+    torch_shape_variants: bool = False,
+    gpu_index: int = 0,
     filter_sources: frozenset[str] | None = None,
     filter_task_ids: frozenset[str] | None = None,
     limit: int | None = None,
@@ -164,6 +174,8 @@ def iter_all_prompts(
                 break
             rec = prompt_from_doc_chunk(chunk)
             rec.setdefault("origin", rec.get("source", "api_doc"))
+            if apply_templates:
+                rec = apply_prompt_template(rec)
             yield from emit(rec)
 
     if limit_reached():
@@ -178,16 +190,22 @@ def iter_all_prompts(
                     break
                 rec.setdefault("origin", "mutation")
                 rec.setdefault("ground_truth_code", code)
+                if capture_mutation_errors:
+                    rec = enrich_mutation_prompt(rec, gpu_index=gpu_index)
+                if apply_templates:
+                    rec = apply_prompt_template(rec)
                 yield from emit(rec)
 
     if limit_reached():
         return
 
     if "torch_op" in sources:
-        for rec in iter_torch_translation_prompts():
+        for rec in iter_torch_translation_prompts(include_shape_variants=torch_shape_variants):
             if limit_reached():
                 break
             rec.setdefault("origin", "torch_op")
+            if apply_templates:
+                rec = apply_prompt_template(rec)
             yield from emit(rec)
 
     if limit_reached():
@@ -256,9 +274,17 @@ def build_prompts_file(
     auto_fetch_docs: bool = True,
     enrich_api_pages: bool | None = None,
     strict_docs: bool = False,
+    capture_mutation_errors: bool = False,
+    apply_templates: bool = False,
+    torch_shape_variants: bool = False,
+    assign_dev_splits: bool = False,
+    dev_fraction: float = 0.1,
+    gpu_index: int = 0,
     filter_sources: frozenset[str] | None = None,
     filter_task_ids: frozenset[str] | None = None,
 ) -> int:
+    from sparkproof.triton_dataset.dataset_split import assign_splits
+
     records = iter_all_prompts(
         doc_dir=doc_dir,
         mined_prompts_path=mined_prompts_path,
@@ -267,8 +293,14 @@ def build_prompts_file(
         auto_fetch_docs=auto_fetch_docs,
         enrich_api_pages=enrich_api_pages,
         strict_docs=strict_docs,
+        capture_mutation_errors=capture_mutation_errors,
+        apply_templates=apply_templates,
+        torch_shape_variants=torch_shape_variants,
+        gpu_index=gpu_index,
         filter_sources=filter_sources,
         filter_task_ids=filter_task_ids,
         limit=limit,
     )
+    if assign_dev_splits:
+        records = assign_splits(records, dev_fraction=dev_fraction)
     return write_prompts_jsonl(out_path, records)

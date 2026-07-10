@@ -35,7 +35,7 @@ If you change verification rules or the OpenRouter request policy, run the full 
 
 1. **OpenRouter terms** — Your use of `OPENROUTER_API_KEY`, including storing and reusing model outputs, must comply with [OpenRouter's terms](https://openrouter.ai/terms) and acceptable-use policies as they apply to your account and jurisdiction.
 
-2. **Upstream provider terms** — Routes through OpenRouter still invoke upstream models (Anthropic, OpenAI). Before using teacher outputs to train, fine-tune, or distill another model (including Qwen3.5-9B or any competing foundation model), confirm that the applicable provider terms permit that use. Restrictions vary by provider, product, and account type.
+2. **Upstream provider terms** — Routes through OpenRouter still invoke upstream models (Anthropic, OpenAI). Before using teacher outputs to train, fine-tune, or distill another model (including Qwen3.5-4B or any competing foundation model), confirm that the applicable provider terms permit that use. Restrictions vary by provider, product, and account type.
 
 3. **Prompt and data rights** — Use only prompts and source material you own, created for this purpose, or are explicitly licensed to use for model training. Do not include:
    - private customer or user chats without documented consent;

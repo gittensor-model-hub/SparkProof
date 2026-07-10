@@ -12,8 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from sparkproof.blackwell.gpu import require_blackwell_gpu
+from sparkproof.triton_dataset.adversarial_harness import run_adversarial_execution
+from sparkproof.triton_dataset.anti_cheat import analyze_anti_cheat
+from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
 
 PASS_MARKER = "SPARKPROOF_TRITON_PASS"
+TIMING_MARKER_RE = re.compile(r"SPARKPROOF_TRITON_TIMING_MS\s*[:=]\s*(\d+(?:\.\d+)?)")
 TRITON_VERSION = "3.7.1"
 
 
@@ -104,6 +108,8 @@ except Exception as e:
         response: str,
         *,
         run_benchmark: bool = False,
+        strict: bool = False,
+        capture_ir: bool = False,
     ) -> dict[str, Any]:
         code = self.extract_code(response)
         stages: dict[str, Any] = {}
@@ -118,10 +124,22 @@ except Exception as e:
         if not api["modern"]:
             return self._result(False, code, stages, "triton_api")
 
+        if strict:
+            anti_cheat = analyze_anti_cheat(code)
+            stages["anti_cheat"] = anti_cheat
+            if not anti_cheat["passed"]:
+                return self._result(False, code, stages, "anti_cheat_failed")
+
         exec_ok, exec_output = self.compile_and_execute(code)
         stages["compile_execute"] = {"passed": exec_ok, "output_tail": exec_output[-2000:]}
         if not exec_ok:
             return self._result(False, code, stages, "compile_execute_failed")
+
+        if strict:
+            adversarial = run_adversarial_execution(code, gpu_index=self.gpu_index)
+            stages["adversarial"] = adversarial
+            if not adversarial["passed"]:
+                return self._result(False, code, stages, "adversarial_failed")
 
         benchmark: dict[str, Any] | None = None
         if run_benchmark:
@@ -129,6 +147,10 @@ except Exception as e:
             stages["benchmark"] = benchmark
             if benchmark["composite_score"] < 0.25:
                 return self._result(False, code, stages, "benchmark_below_floor")
+
+        if capture_ir:
+            ir = capture_ir_artifacts(code, gpu_index=self.gpu_index)
+            stages["ir_artifacts"] = ir
 
         return self._result(True, code, stages, None, benchmark=benchmark)
 
@@ -155,7 +177,7 @@ except Exception as e:
 
     @staticmethod
     def _benchmark_score(code: str, exec_output: str) -> dict[str, Any]:
-        """Lightweight static+binary pass score (not full TritonBench perf harness)."""
+        """Score structure and consume an in-process ``triton.testing.do_bench`` timing."""
         checks = {
             "correctness": 1.0 if PASS_MARKER in exec_output or "allclose" in exec_output.lower() else 0.5,
             "autotune": 1.0 if "@triton.autotune" in code else 0.0,
@@ -166,7 +188,14 @@ except Exception as e:
             else 0.0,
         }
         composite = sum(checks.values()) / len(checks)
-        return {"checks": checks, "composite_score": composite}
+        out: dict[str, Any] = {"checks": checks, "composite_score": composite}
+        timings = [float(value) for value in TIMING_MARKER_RE.findall(exec_output)]
+        if timings:
+            timings.sort()
+            out["timing_ms"] = timings[len(timings) // 2]
+            out["timing_samples"] = len(timings)
+            out["timing_method"] = "candidate_triton_do_bench"
+        return out
 
     @staticmethod
     def _indent(code: str, spaces: int) -> str:

@@ -20,6 +20,12 @@ class CandidateResult:
     score: float
 
 
+def _client_value(client: Any, name: str, default: Any = None) -> Any:
+    if isinstance(client, dict):
+        return client.get(name, default)
+    return getattr(client, name, default)
+
+
 def _benchmark_score(validation: dict[str, Any]) -> float:
     bench = validation.get("benchmark") or {}
     if bench:
@@ -86,6 +92,8 @@ def generate_with_repair(
     max_repairs: int,
     validator: TritonKernelValidator,
     run_benchmark: bool,
+    strict_validate: bool = False,
+    capture_ir: bool = False,
     prompt_meta: dict[str, Any] | None = None,
 ) -> CandidateResult | None:
     repair_user = prompt
@@ -107,7 +115,12 @@ def generate_with_repair(
             record.setdefault("metadata", {})
             record["metadata"]["prompt_meta"] = prompt_meta
 
-        validation = validator.validate_response(record["response"], run_benchmark=run_benchmark)
+        validation = validator.validate_response(
+            record["response"],
+            run_benchmark=run_benchmark,
+            strict=strict_validate,
+            capture_ir=capture_ir,
+        )
         last_record, last_validation = record, validation
         if validation["passed"]:
             stamped = dict(record)
@@ -151,6 +164,8 @@ def generate_best_of_n(
     max_repairs: int = 2,
     gpu_index: int = 0,
     run_benchmark: bool = False,
+    strict_validate: bool = False,
+    capture_ir: bool = False,
     validator: TritonKernelValidator | None = None,
 ) -> tuple[CandidateResult | None, list[CandidateResult]]:
     unknown = set(providers) - SUPPORTED_PROVIDERS
@@ -175,6 +190,8 @@ def generate_best_of_n(
             max_repairs=max_repairs,
             validator=validator,
             run_benchmark=run_benchmark,
+            strict_validate=strict_validate,
+            capture_ir=capture_ir,
             prompt_meta=meta,
         )
         if result is not None:
@@ -191,15 +208,20 @@ def generate_best_candidate(
     client: Any,
     validator: TritonKernelValidator | None = None,
     run_benchmark: bool = False,
+    strict_validate: bool = False,
+    capture_ir: bool = False,
 ) -> dict[str, Any]:
     """Orchestrator-friendly wrapper around best-of-N generation."""
-    gateway = getattr(client, "gateway", None) or client["gateway"]
-    api_key = getattr(client, "api_key", None) or client["api_key"]
-    providers = getattr(client, "providers", None) or client.get("providers", ["anthropic", "openai"])
-    gpu_index = getattr(client, "gpu_index", 0)
-    max_tokens = getattr(client, "max_tokens", 4096)
-    max_repairs = getattr(client, "max_repairs", 2)
-    temperature = getattr(client, "temperature", 0.7)
+    gateway = _client_value(client, "gateway")
+    api_key = _client_value(client, "api_key")
+    providers = _client_value(client, "providers", ["anthropic", "openai"])
+    gpu_index = _client_value(client, "gpu_index", 0)
+    max_tokens = _client_value(client, "max_tokens", 4096)
+    max_repairs = _client_value(client, "max_repairs", 2)
+    temperature = _client_value(client, "temperature", 0.7)
+
+    strict_validate = strict_validate or bool(_client_value(client, "strict_validate", False))
+    capture_ir = capture_ir or bool(_client_value(client, "capture_ir", False))
 
     winner, all_candidates = generate_best_of_n(
         gateway=gateway,
@@ -211,6 +233,8 @@ def generate_best_candidate(
         max_repairs=max_repairs,
         gpu_index=gpu_index,
         run_benchmark=run_benchmark,
+        strict_validate=strict_validate,
+        capture_ir=capture_ir,
         validator=validator,
     )
     if winner is not None:

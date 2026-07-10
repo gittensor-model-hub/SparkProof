@@ -15,6 +15,12 @@ limit=""
 filter_source_args=()
 filter_task_id_args=()
 no_enrich_api_pages=false
+apply_templates=false
+assign_dev_splits=false
+torch_shape_variants=false
+strict_validate=false
+capture_ir=false
+export_dpo=""
 do_train=false
 dry_run_train=false
 allow_no_gpu_attest=false
@@ -36,6 +42,12 @@ Options:
   --source SOURCE          only this prompt source at generate time (repeatable)
   --task-id ID             only this task_id at generate time (repeatable)
   --no-enrich-api-pages    skip Sphinx API page enrichment (Option B)
+  --apply-templates        structured design/implementation/validation prompt sections
+  --assign-dev-splits      ancestry-aware train/dev split at prompt build
+  --torch-shape-variants   adversarial shape presets for torch_op prompts
+  --strict-validate        anti-cheat + multi-seed adversarial GPU validation
+  --capture-ir             attach TTIR/TTGIR artifacts when available
+  --export-dpo PATH        write optimization DPO pairs from adjudication
   --train                  Axolotl SFT via SparkDistill (qwen3.5-4b-phase1)
   --dry-run-train          print train command only
   --benchmark
@@ -65,6 +77,12 @@ while [ $# -gt 0 ]; do
     --source) filter_source_args+=(--source "$2"); shift 2 ;;
     --task-id) filter_task_id_args+=(--task-id "$2"); shift 2 ;;
     --no-enrich-api-pages) no_enrich_api_pages=true; shift ;;
+    --apply-templates) apply_templates=true; shift ;;
+    --assign-dev-splits) assign_dev_splits=true; shift ;;
+    --torch-shape-variants) torch_shape_variants=true; shift ;;
+    --strict-validate) strict_validate=true; shift ;;
+    --capture-ir) capture_ir=true; shift ;;
+    --export-dpo) export_dpo="$2"; extra+=(--benchmark); shift 2 ;;
     --train) do_train=true; shift ;;
     --dry-run-train) dry_run_train=true; do_train=true; shift ;;
     --benchmark) extra+=(--benchmark); shift ;;
@@ -97,6 +115,9 @@ echo ">>> building full diverse prompts (doc + mutation + torch_op)"
 build_args=(--out "$prompts")
 if [ -n "$limit" ]; then build_args+=(--limit "$limit"); fi
 if [ "$no_enrich_api_pages" = true ]; then build_args+=(--no-enrich-api-pages); fi
+if [ "$apply_templates" = true ]; then build_args+=(--apply-templates); fi
+if [ "$assign_dev_splits" = true ]; then build_args+=(--assign-dev-splits); fi
+if [ "$torch_shape_variants" = true ]; then build_args+=(--torch-shape-variants); fi
 if [ "${#filter_source_args[@]}" -gt 0 ]; then build_args+=("${filter_source_args[@]}"); fi
 if [ "${#filter_task_id_args[@]}" -gt 0 ]; then build_args+=("${filter_task_id_args[@]}"); fi
 uv run sparkproof-build-prompts "${build_args[@]}"
@@ -106,6 +127,9 @@ if [ -n "$limit" ]; then gen_args+=(--limit "$limit"); fi
 if [ "${#filter_source_args[@]}" -gt 0 ]; then gen_args+=("${filter_source_args[@]}"); fi
 if [ "${#filter_task_id_args[@]}" -gt 0 ]; then gen_args+=("${filter_task_id_args[@]}"); fi
 if [ "${#extra[@]}" -gt 0 ]; then gen_args+=("${extra[@]}"); fi
+if [ "$strict_validate" = true ]; then gen_args+=(--strict-validate); fi
+if [ "$capture_ir" = true ]; then gen_args+=(--capture-ir); fi
+if [ -n "$export_dpo" ]; then gen_args+=(--export-dpo "$export_dpo"); fi
 
 echo ">>> teacher generate + Blackwell prove"
 uv run sparkproof-triton-generate "${gen_args[@]}"

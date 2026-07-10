@@ -113,7 +113,13 @@ TORCH_OPS = [
 ]
 
 
-def build_torch_translation_prompt(op: dict) -> dict:
+ADVERSARIAL_SHAPE_PRESETS = [
+    {"M": 127, "N": 1003, "K": 6143, "B": 3, "D": 1003, "L": 127},
+    {"M": 255, "N": 511, "K": 1023, "B": 5, "D": 511, "L": 255},
+]
+
+
+def build_torch_translation_prompt(op: dict, *, shape_preset: dict[str, int] | None = None) -> dict:
     prompt = f"""Write a Triton 3.7.1 kernel replicating this PyTorch operation on Blackwell SM12x:
 
 Operation: `{op['code']}`
@@ -126,9 +132,17 @@ Requirements:
 4. Self-contained test with torch.allclose at the end
 5. Instantiate symbolic dimensions with concrete adversarial sizes; use a non-power-of-two tail such as 1003
 6. Test float32 and float16 inputs (and state justified tolerances)
-7. Print SPARKPROOF_TRITON_PASS after successful test"""
+7. Print SPARKPROOF_TRITON_PASS after successful test
+8. Benchmark the launcher with triton.testing.do_bench and print
+   SPARKPROOF_TRITON_TIMING_MS: <median milliseconds>"""
+    if shape_preset:
+        shape_hint = ", ".join(f"{key}={value}" for key, value in sorted(shape_preset.items()))
+        prompt += f"\n\nUse these concrete dimensions in your self-test: {shape_hint}"
+    task_suffix = ""
+    if shape_preset:
+        task_suffix = "_" + "_".join(str(shape_preset.get(k, "")) for k in ("M", "N", "K") if k in shape_preset)
     return {
-        "task_id": f"translate_{op['name'].lower()}",
+        "task_id": f"translate_{op['name'].lower()}{task_suffix}",
         "source": "torch_op",
         "origin": "torch_op",
         "split": "train",
@@ -141,5 +155,11 @@ Requirements:
     }
 
 
-def iter_torch_translation_prompts() -> list[dict]:
-    return [build_torch_translation_prompt(op) for op in TORCH_OPS]
+def iter_torch_translation_prompts(*, include_shape_variants: bool = False) -> list[dict]:
+    prompts = [build_torch_translation_prompt(op) for op in TORCH_OPS]
+    if not include_shape_variants:
+        return prompts
+    for op in TORCH_OPS:
+        for preset in ADVERSARIAL_SHAPE_PRESETS:
+            prompts.append(build_torch_translation_prompt(op, shape_preset=preset))
+    return prompts

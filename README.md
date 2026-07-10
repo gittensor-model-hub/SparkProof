@@ -96,7 +96,7 @@ scripts/run_triton_pipeline.sh --run-id triton-cc-001 --publish your-org/sparkpr
 # TritonBench eval (held-out — results go outside training dirs)
 uv run sparkproof-eval-tritonbench \
   --endpoint http://localhost:8000/v1 \
-  --model triton-qwen-9b \
+  --model sparkdistill-triton-qwen-4b \
   --out results/tritonbench_round1.json
 
 # Step by step

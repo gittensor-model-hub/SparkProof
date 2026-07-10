@@ -15,6 +15,7 @@ from sparkproof.hashing import sha256_file
 from sparkproof.manifest import build_manifest
 from sparkproof.pipeline.blackwell import prove_blackwell_bundle
 from sparkproof.triton_dataset.decontaminate import TritonDecontaminator
+from sparkproof.triton_dataset.dpo_export import enrich_adjudication_with_responses, write_dpo_jsonl, export_dpo_jsonl
 from sparkproof.triton_dataset.failure_miner import mine_failure_to_tasks, record_failure
 from sparkproof.triton_dataset.multi_candidate import generate_best_of_n
 from sparkproof.triton_dataset.orchestrate import run_dataset_generation_step
@@ -71,6 +72,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-repairs", type=int, default=2)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--benchmark", action="store_true")
+    parser.add_argument(
+        "--strict-validate",
+        action="store_true",
+        help="run anti-cheat AST checks and multi-seed adversarial execution",
+    )
+    parser.add_argument(
+        "--capture-ir",
+        action="store_true",
+        help="attach TTIR/TTGIR artifacts to validation when available",
+    )
+    parser.add_argument(
+        "--export-dpo",
+        type=Path,
+        default=None,
+        help="write optimization preference pairs from adjudication to this jsonl path",
+    )
+    parser.add_argument("--dpo-min-speedup", type=float, default=0.03)
     parser.add_argument("--no-gpu-attest", action="store_true")
     parser.add_argument("--skip-blackwell", action="store_true")
     parser.add_argument("--allow-empty", action="store_true", help="development only: allow a run with zero winners")
@@ -100,6 +118,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 0.0 <= args.min_pass_rate <= 1.0:
         parser.error("--min-pass-rate must be between 0 and 1")
+    if not 0.0 <= args.dpo_min_speedup < 1.0:
+        parser.error("--dpo-min-speedup must be between 0 and 1")
+    if args.export_dpo and not args.benchmark:
+        parser.error("--export-dpo requires --benchmark")
 
     _load_env()
     gateway = args.gateway or default_gateway()
@@ -139,6 +161,8 @@ def main(argv: list[str] | None = None) -> int:
         "max_tokens": args.max_tokens,
         "max_repairs": args.max_repairs,
         "gpu_index": args.gpu,
+        "strict_validate": args.strict_validate,
+        "capture_ir": args.capture_ir,
     }
 
     filter_sources = parse_filter_set(args.filter_sources)
@@ -187,9 +211,13 @@ def main(argv: list[str] | None = None) -> int:
             max_repairs=args.max_repairs,
             gpu_index=args.gpu,
             run_benchmark=args.benchmark,
+            strict_validate=args.strict_validate,
+            capture_ir=args.capture_ir,
         )
         adjudication_row = {
             "task_id": prompt_record.get("task_id"),
+            "prompt": prompt_record.get("prompt", ""),
+            "system": prompt_record.get("system", ""),
             "winner_provider": winner.provider if winner else None,
             "candidates": [
                 {
@@ -197,6 +225,8 @@ def main(argv: list[str] | None = None) -> int:
                     "passed": c.validation.get("passed"),
                     "score": c.score,
                     "repairs_used": c.repairs_used,
+                    "validation": c.validation,
+                    "response": c.record.get("response", ""),
                 }
                 for c in all_candidates
             ],
@@ -254,6 +284,15 @@ def main(argv: list[str] | None = None) -> int:
     (args.out / "adjudication.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in adjudication)
     )
+
+    if args.export_dpo:
+        enriched = enrich_adjudication_with_responses(
+            adjudication,
+            checkpoint_path=trajectory_checkpoint,
+        )
+        pairs = export_dpo_jsonl(enriched, min_speedup=args.dpo_min_speedup)
+        count = write_dpo_jsonl(args.export_dpo, pairs)
+        print(f"exported {count} DPO preference pairs to {args.export_dpo}", file=sys.stderr)
 
     print(
         f"multi-candidate: {len(trajectories)} winners from {len(adjudication)} prompts",

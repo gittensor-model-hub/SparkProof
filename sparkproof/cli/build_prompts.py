@@ -42,6 +42,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="development only: permit missing/truncated pinned documentation sources",
     )
+    parser.add_argument(
+        "--capture-mutation-errors",
+        action="store_true",
+        help="run broken kernels on GPU and attach real compiler/runtime tails to mutation prompts",
+    )
+    parser.add_argument(
+        "--apply-templates",
+        action="store_true",
+        help="wrap prompts with structured design/implementation/validation sections",
+    )
+    parser.add_argument(
+        "--torch-shape-variants",
+        action="store_true",
+        help="emit adversarial shape presets for each torch_op translation prompt",
+    )
+    parser.add_argument(
+        "--assign-dev-splits",
+        action="store_true",
+        help="assign ancestry-aware train/dev splits (default keeps all train)",
+    )
+    parser.add_argument("--dev-fraction", type=float, default=0.1)
+    parser.add_argument("--gpu", type=int, default=0, help="GPU index for mutation error capture")
     parser.add_argument("--mined-prompts", type=Path, default=None, help="failure-mined tasks jsonl")
     parser.add_argument("--evolved-prompts", type=Path, default=None, help="self-evolved tasks jsonl")
     parser.add_argument("--limit", type=int, default=None)
@@ -75,6 +97,12 @@ def main(argv: list[str] | None = None) -> int:
         auto_fetch_docs=not args.no_fetch_docs,
         enrich_api_pages=False if args.no_enrich_api_pages else None,
         strict_docs=not args.allow_partial_docs,
+        capture_mutation_errors=args.capture_mutation_errors,
+        apply_templates=args.apply_templates,
+        torch_shape_variants=args.torch_shape_variants,
+        assign_dev_splits=args.assign_dev_splits,
+        dev_fraction=args.dev_fraction,
+        gpu_index=args.gpu,
         filter_sources=parse_filter_set(args.filter_sources),
         filter_task_ids=parse_filter_set(args.filter_task_ids),
     )
