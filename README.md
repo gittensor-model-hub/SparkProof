@@ -116,6 +116,95 @@ What a verified sample proves:
 - `gpu_attestation.json` from NVIDIA CC (NRAS)
 - `trajectories.jsonl` = verified-only; `trajectories_raw.jsonl` = all teacher outputs
 
+## Training-data strategy for a Triton specialist
+
+The target model must combine five capabilities: Python/PyTorch coding, Triton programming,
+GPU optimization, parallel-algorithm reasoning, and debugging/profiling tool use. The current
+161 deterministic seeds are the verified foundation, not the final training scale.
+
+Recommended SFT mixture:
+
+| Capability | Share | Dataset source |
+|---|---:|---|
+| PyTorch → Triton | 30% | Operator specifications and externally verified translations |
+| Debugging | 20% | Mutated kernels plus real compiler/runtime errors and verified fixes |
+| Optimization | 20% | Correct before/after kernels with statistically stable speedups |
+| Triton semantics/docs | 15% | API, semantics, and official tutorial prompts |
+| Python/PyTorch tooling | 10% | Licensed high-quality coding replay data |
+| Profiling/IR analysis | 5% | Real NCU, TTIR, TTGIR, and profiler artifacts |
+
+Use frontier teachers as hypothesis generators; the compiler, PyTorch oracle, profiler, and
+Blackwell GPU are the source of truth:
+
+```text
+task specification
+  → best-of-N frontier teachers
+  → syntax and Triton API validation
+  → compile and execute
+  → external numerical tests
+  → anti-cheating checks
+  → benchmark/profile
+  → decontaminate
+  → Blackwell prove and attest
+  → SFT / preference datasets
+```
+
+### Acceptance requirements
+
+Do not accept a sample solely because its teacher-written `torch.allclose` test passes.
+SparkProof should test generated kernels independently across:
+
+- tiny, normal, and adversarial dimensions, including tails such as 127, 1003, and 6143;
+- contiguous and non-contiguous layouts;
+- FP32, FP16, and BF16 where the operation supports them;
+- multiple random seeds and extreme values for reductions or exponentials;
+- unseen shapes that were not supplied to the teacher.
+
+Anti-cheating checks should inspect the launcher AST, disable forbidden PyTorch fallback
+operations during validation, confirm that the custom kernel launches, and verify that output
+buffers are written by that launch. Replacing a JIT kernel body with `pass` is not a reliable
+general anti-cheating test.
+
+### Reasoning and debugging records
+
+Request inspectable engineering rationale rather than private chain-of-thought. A useful
+teacher response explains decomposition/grid, tile selection, pointer and stride equations,
+masking, accumulation precision, expected bottleneck, implementation, and validation.
+
+Debugging prompts must contain the **actual** error produced by running the broken kernel:
+
+```text
+input:  broken kernel + compiler/runtime output + failing shape/dtype
+target: concise root cause + complete corrected kernel + regression test
+```
+
+Useful bug families include masks, strides, grid under-coverage, reduction axes, accumulator
+precision, races/atomics, `tl.dot` constraints, descriptor/layout misuse, autotune errors, and
+numerical overflow.
+
+### Optimization records
+
+Label a kernel as optimized only when it remains correct and repeated measurements prove an
+improvement above noise. Record the baseline and optimized code, GPU and software versions,
+shape/dtype/layout, warmups, iterations, median/tail latency, variance, speedup, and profiler
+metrics. Use NCU on representative bottlenecks rather than every candidate. Slower but valid
+candidates belong in preference/DPO pairs, not positive SFT examples.
+
+Split train/dev/eval by operator family, reference kernel, mutation ancestry, and prompt
+template—not randomly by row—to prevent near-duplicate leakage.
+
+Suggested scale:
+
+1. Smoke: 161 deterministic seeds.
+2. Phase 1 SFT: 5,000–10,000 verified trajectories.
+3. Phase 2: 20,000–50,000 shape/dtype/layout variants.
+4. Preference training: at least 5,000 measured winner/loser pairs.
+5. Execution RL: correctness plus measured performance reward.
+
+The next dataset components to add are an external adversarial correctness harness, real
+broken-kernel error capture, benchmark-pair generation, NCU/IR artifact collection,
+AST-based fallback detection, and ancestry-aware dataset splitting.
+
 ## Bundle layout
 
 ```
