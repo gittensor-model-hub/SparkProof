@@ -109,6 +109,14 @@ uv run sparkproof-publish-dataset --bundle bundles/run-001 --repo-id your-org/da
 
 Multi-candidate uses **yunwu/openrouter** gateways (Fable 5 + GPT 5.6 xhigh), not raw OpenAI/Anthropic SDKs.
 
+`sparkproof-publish-dataset` uploads the dataset rows **and** the bundle's proof
+artifacts (`manifest.json`, `dataset_manifest.json`, `gpu_attestation.json`,
+`trajectories.jsonl`, ...) under `proof/` in the same HF repo. That is what lets a
+SparkDistill validator re-verify everything from the HF link alone. To get the dataset
+rewarded (`dataset:s/m/l`), open a text-only PR appending your HF URL and
+`trajectories_sha256` to SparkDistill's `datasets/registry.jsonl` — see
+`SparkDistill/datasets/README.md`.
+
 What a verified sample proves:
 
 - OpenRouter calls with pinned slugs + **`reasoning.effort: xhigh`** (`request_sha256` replay)

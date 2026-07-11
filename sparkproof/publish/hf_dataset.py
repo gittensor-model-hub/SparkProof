@@ -51,12 +51,43 @@ def load_trajectories_jsonl(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+# Bundle artifacts mirrored into the HF dataset repo under proof/ so a validator can
+# re-run `sparkproof-verify` (and the SparkDistill dataset gate) from the HF link alone.
+PROOF_ARTIFACTS = (
+    "manifest.json",
+    "dataset_manifest.json",
+    "gpu_attestation.json",
+    "validation_report.jsonl",
+    "prompts.jsonl",
+    "trajectories.jsonl",
+    "trajectories_raw.jsonl",
+)
+
+
+def upload_proof_artifacts(*, api: Any, bundle_dir: Path, repo_id: str) -> list[str]:
+    uploaded: list[str] = []
+    for name in PROOF_ARTIFACTS:
+        path = bundle_dir / name
+        if not path.exists():
+            continue
+        api.upload_file(
+            path_or_fileobj=str(path),
+            path_in_repo=f"proof/{name}",
+            repo_id=repo_id,
+            repo_type="dataset",
+            commit_message=f"SparkProof bundle artifact: {name}",
+        )
+        uploaded.append(name)
+    return uploaded
+
+
 def publish_bundle_to_hf(
     *,
     bundle_dir: Path,
     repo_id: str,
     private: bool = False,
     split: str = "train",
+    include_proof: bool = True,
 ) -> str:
     from datasets import Dataset
     from huggingface_hub import HfApi
@@ -78,4 +109,6 @@ def publish_bundle_to_hf(
     api = HfApi()
     api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True, private=private)
     ds.push_to_hub(repo_id, split=split, commit_message="SparkProof verified Triton trajectories")
+    if include_proof:
+        upload_proof_artifacts(api=api, bundle_dir=bundle_dir, repo_id=repo_id)
     return f"https://huggingface.co/datasets/{repo_id}"
