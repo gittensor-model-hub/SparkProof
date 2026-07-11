@@ -82,6 +82,42 @@ def test_release_gate_requires_positive_validation():
     assert "missing or failed sparkproof validation" in check_trajectory_row(trajectory, decon)
 
 
+def test_release_gate_secret_scan_ignores_benign_hyphenated_words():
+    """Regression: a bare 'sk-' substring needle blocked prose like 'mask-based'."""
+    decon = TritonDecontaminator()
+    trajectory = {
+        "response": "Use a mask-based tl.load with task-level tiling.\n```python\nprint(1)\n```",
+        "metadata": {"prompt_meta": _prompt()},
+        "sparkproof_validation": {"passed": True},
+    }
+    issues = check_trajectory_row(trajectory, decon)
+    assert not any("suspicious content" in issue for issue in issues)
+
+
+def test_release_gate_secret_scan_still_catches_real_api_keys_and_paths():
+    decon = TritonDecontaminator()
+    base = {
+        "metadata": {"prompt_meta": _prompt()},
+        "sparkproof_validation": {"passed": True},
+    }
+    leaked_key = {**base, "response": "```python\nkey = 'sk-abCD1234efGH5678ijKL'\nprint(1)\n```"}
+    assert any("sk- API key" in issue for issue in check_trajectory_row(leaked_key, decon))
+    leaked_path = {**base, "response": "```python\nopen('/home/speedy/.env')\nprint(1)\n```"}
+    assert any("home directory path" in issue for issue in check_trajectory_row(leaked_path, decon))
+
+
+def test_release_gate_blocks_held_out_split():
+    decon = TritonDecontaminator()
+    meta = _prompt()
+    meta["split"] = "held_out"
+    trajectory = {
+        "response": "```python\nprint(1)\n```",
+        "metadata": {"prompt_meta": meta},
+        "sparkproof_validation": {"passed": True},
+    }
+    assert any("reserved split 'held_out'" in issue for issue in check_trajectory_row(trajectory, decon))
+
+
 def test_ast_fingerprint_preserves_kernel_logic():
     add = "@triton.jit\ndef k(x, y):\n    return tl.load(x) + tl.load(y)\n"
     multiply = "@triton.jit\ndef q(a, b):\n    return tl.load(a) * tl.load(b)\n"

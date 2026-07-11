@@ -2,8 +2,8 @@
 
 Replaces prefix truncation (`--limit N` cutting off source iteration order)
 with deterministic, coverage-first sampling: every available source gets one
-record before any source gets a second, and no (source, family) bucket can
-claim more than `max_share` of the limit unless supply elsewhere is exhausted.
+record before any source gets a second, and no single source can claim more
+than `max_share` of the limit unless supply elsewhere is exhausted.
 Which specific records get picked (not just which bucket) is seeded, so
 different run seeds explore different subsets while a fixed seed replays
 byte-identically.
@@ -52,11 +52,11 @@ def stratified_sample(
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Sample up to `limit` records; returns (sampled_records, source_counts).
 
-    Coverage-first: every (source, family) bucket is visited once, grouped by
-    source (each source's own families round-robin within its turn), before
-    any bucket is revisited. A bucket capped at `max_share * limit` is skipped
-    in later passes unless every other bucket is exhausted or also capped, in
-    which case the cap is lifted rather than under-filling `limit`.
+    Coverage-first: sources round-robin (each source's own families round-robin
+    within its turn), so every source gets a record before any source gets a
+    second. A source capped at `max_share * limit` is skipped in later passes
+    unless every other source is exhausted or also capped, in which case the
+    cap is lifted rather than under-filling `limit`.
     """
     if limit is None or limit >= len(records):
         return list(records), _source_counts(records)
