@@ -330,6 +330,21 @@ bundles/<run-id>/
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the pinned-teacher/gateway policy and the
 legal and terms-of-service gate that applies to every published bundle.
 
+## Dataset warning (read before you publish)
+
+**If you generate or publish a dataset, you alone are responsible for complying with
+every model provider and gateway terms of service that applies to your run** — OpenRouter,
+yunwu, Anthropic, OpenAI, and any upstream model vendor your route touches. SparkProof
+only records what your API key returns; it does not grant you rights to train on,
+redistribute, or monetize those outputs.
+
+**Maintainers provide this tooling as-is and accept no responsibility** for your prompts,
+teacher calls, published Hugging Face bundles, registry submissions, licensing disputes,
+or downstream use by miners, evaluators, or third parties. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the full legal gate.
+
+built by :Love
+
 ## License
 
 MIT, see [`LICENSE`](LICENSE).
