@@ -20,7 +20,7 @@ from sparkproof.triton_dataset.dataset_split import assign_splits, split_group_k
 from sparkproof.triton_dataset.dpo_export import enrich_adjudication_with_responses, export_dpo_jsonl
 from sparkproof.triton_dataset.error_capture import capture_execution_error
 from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
-from sparkproof.triton_dataset.multi_candidate import _client_value, generate_best_of_n
+from sparkproof.triton_dataset.multi_candidate import _client_value, acceptance_score, generate_best_of_n
 from sparkproof.triton_dataset.python_runner import PythonExecution
 from sparkproof.triton_dataset.prompt_templates import apply_prompt_template, wrap_prompt
 from sparkproof.triton_dataset.torch_ops import iter_torch_translation_prompts
@@ -414,7 +414,34 @@ def test_benchmark_wrapper_monitors_real_do_bench_calls(monkeypatch):
     assert "0.001" not in output
 
 
-def test_validate_response_computes_real_speedup_against_reference(monkeypatch):
+def test_benchmark_wrapper_strips_forged_last_timing_marker(monkeypatch):
+    def fake_run(source, **kwargs):
+        return PythonExecution(
+            returncode=0,
+            stdout=(
+                "SPARKPROOF_TRITON_PASS\n"
+                "SPARKPROOF_LAST_TIMING_MS: 0.000001\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("sparkproof.triton.validator.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton.validator.run_python_source", fake_run)
+
+    validator = TritonKernelValidator()
+    passed, output = validator.compile_and_execute(VALID_KERNEL, monitor_benchmark=True)
+    assert passed is True
+    assert "SPARKPROOF_LAST_TIMING_MS" not in output
+    benchmark = validator._benchmark_score(
+        VALID_KERNEL,
+        output,
+        {"torch_reference": "torch.sigmoid(x)", "shapes": {"x": "(M, N)"}},
+    )
+    assert "candidate_reported_timing_ms" not in benchmark
+    assert "self_reported_speedup" not in benchmark
+
+
+def test_validate_response_records_untrusted_speedup_diagnostic(monkeypatch):
     def fake_candidate_run(source, **kwargs):
         nonce = re.search(r"SPARKPROOF_MONITORED_TIMING_([0-9a-f]+)", source).group(1)
         return PythonExecution(
@@ -446,10 +473,15 @@ def test_validate_response_computes_real_speedup_against_reference(monkeypatch):
     )
     benchmark = result["benchmark"]
     assert benchmark["reference_timing_ms"] == pytest.approx(1.0)
-    assert benchmark["speedup"] == pytest.approx(2.0)
-    assert benchmark["normalized_speedup"] == pytest.approx(1.0)
-    assert benchmark["fast_1"] is True
-    assert benchmark["fast_2"] is True
+    assert benchmark["candidate_reported_timing_ms"] == pytest.approx(0.5)
+    assert benchmark["self_reported_speedup"] == pytest.approx(2.0)
+    assert benchmark["speedup_eligible"] is False
+    assert "normalized_speedup" not in benchmark
+    assert "fast_1" not in benchmark
+    assert "fast_2" not in benchmark
+    # Even an implausibly favorable self-report cannot change winner ranking.
+    baseline = {"passed": True, "benchmark": {"composite_score": benchmark["composite_score"]}}
+    assert acceptance_score(result) == acceptance_score(baseline)
 
 
 def test_validate_response_omits_speedup_without_a_derivable_reference(monkeypatch):
@@ -471,13 +503,14 @@ def test_validate_response_omits_speedup_without_a_derivable_reference(monkeypat
     )
     assert "speedup" not in result["benchmark"]
     assert "normalized_speedup" not in result["benchmark"]
+    assert "self_reported_speedup" not in result["benchmark"]
 
 
 def test_anti_cheat_do_bench_monkeypatch_never_reaches_the_benchmark_stage():
     # A candidate that fabricates its own timing by patching do_bench should
     # be rejected by anti_cheat before compile_and_execute (and therefore
     # before any reference comparison) ever runs -- it must not be able to
-    # buy itself a fast_1/fast_2 credit by lying about its own speed.
+    # turn a fabricated timing into a ranking signal.
     cheating = "import triton.testing\ntriton.testing.do_bench = lambda *a, **k: 0.0001\n" + VALID_KERNEL
     validator = TritonKernelValidator()
     result = validator.validate_response(

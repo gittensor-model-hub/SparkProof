@@ -144,9 +144,11 @@ Requirements:
 7. Print SPARKPROOF_TRITON_PASS after successful test
 8. Invoke triton.testing.do_bench(lambda: launcher(...)) on your correctness-test
    inputs; SparkProof records the returned timing independently
-9. Additionally invoke triton.testing.do_bench once more at these larger sizes,
-   so your reported timing is comparable to SparkProof's PyTorch baseline:
-   {benchmark_sizes}"""
+9. Additionally invoke triton.testing.do_bench once more with float32 inputs at
+   these larger sizes:
+   {benchmark_sizes}
+   This last timing is diagnostic only. Candidate-controlled benchmark calls are
+   not eligible for speed ranking or KernelBench fast_p credit."""
     if shape_preset:
         shape_hint = ", ".join(f"{key}={value}" for key, value in sorted(shape_preset.items()))
         prompt += f"\n\nUse these concrete dimensions in your self-test: {shape_hint}"

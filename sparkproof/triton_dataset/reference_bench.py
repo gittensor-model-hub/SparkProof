@@ -1,10 +1,12 @@
-"""Reference PyTorch benchmark: the missing half of KernelBench's fast_p metric.
+"""Reference PyTorch benchmark for diagnostic candidate/reference comparisons.
 
 KernelBench's core metric compares a generated kernel against the PyTorch
 reference it replaces: ``speedup = reference_wall_clock / kernel_wall_clock``.
 SparkProof carries a per-task PyTorch reference forward from `torch_ops.py`
 (source C) through self-evolution (source D) as `torch_reference`/`reference_expr`
-plus `shapes`, but nothing ever benchmarked it — this module does.
+plus `shapes`, but nothing ever benchmarked it — this module does. The candidate
+side is still self-reported, so the resulting ratio is not a trusted fast_p
+metric and must not affect candidate ranking.
 
 Reference availability is per-task, not universal: mutation-sourced tasks
 (source B) carry a Triton kernel as "ground truth", not a PyTorch expression,
@@ -30,9 +32,9 @@ REFERENCE_TIMING_RE = re.compile(r"SPARKPROOF_REFERENCE_TIMING_MS\s*[:=]\s*(\d+(
 # Sized for a stable, overhead-amortized timing signal. Deliberately distinct
 # from torch_ops.py's ADVERSARIAL_SHAPE_PRESETS, which use small non-power-of-two
 # sizes to exercise boundary-mask correctness, not to produce comparable timings.
-# torch_ops.py's prompt tells the candidate to additionally benchmark itself at
-# these exact sizes, so the comparison in validator.py is apples-to-apples if
-# the candidate follows that instruction.
+# torch_ops.py asks the candidate to benchmark these sizes for diagnostics.
+# The harness does not yet control or verify that candidate invocation, so the
+# comparison must not be treated as apples-to-apples or reward-bearing.
 DEFAULT_BENCHMARK_SIZES: dict[str, int] = {"M": 4096, "N": 4096, "K": 4096, "B": 32, "D": 4096, "L": 2048}
 
 # The only scalar (non-tensor, non-dimension) free variable any current

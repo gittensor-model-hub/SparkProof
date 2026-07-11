@@ -118,7 +118,11 @@ except Exception as e:
             timeout=timeout,
             env_overrides={"TRITON_PRINT_AUTOTUNING": "0"},
         )
-        output = TIMING_MARKER_RE.sub("", execution.output)
+        # Candidate stdout is untrusted. Remove both public marker forms before
+        # appending values recovered from nonce-bound wrapper markers below.
+        # Otherwise a candidate can print a forged generic marker without ever
+        # calling do_bench.
+        output = LAST_TIMING_MARKER_RE.sub("", TIMING_MARKER_RE.sub("", execution.output))
         if monitor_benchmark:
             monitored_pattern = re.compile(
                 rf"SPARKPROOF_MONITORED_TIMING_{timing_nonce}\s*:\s*(\d+(?:\.\d+)?)"
@@ -214,8 +218,13 @@ except Exception as e:
     def _benchmark_score(
         self, code: str, exec_output: str, prompt_meta: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Score structure, consume in-process ``do_bench`` timings, and — when the
-        task carries a PyTorch reference — compare against it for a real speedup.
+        """Score structure and record diagnostic ``do_bench`` timings.
+
+        The candidate controls the callable passed to do_bench, its inputs, and
+        its dtype. Consequently this is not a trusted KernelBench ``fast_p``
+        measurement and must not affect candidate ranking. A future trusted
+        speedup metric must have the harness invoke the launcher, verify its
+        output, and time it on harness-owned canonical inputs.
         """
         checks = {
             "correctness": 1.0 if PASS_MARKER in exec_output or "allclose" in exec_output.lower() else 0.5,
@@ -235,25 +244,22 @@ except Exception as e:
             out["timing_samples"] = len(timings)
             out["timing_method"] = "monitored_triton_do_bench"
 
-        # The candidate's *last* do_bench call is, by prompt convention (see
-        # torch_ops.py requirement 9), the one run at SparkProof's canonical
-        # benchmark size -- the one comparable to the reference below. The
-        # median above stays candidate-vs-candidate only (benchmark_pairs.py),
-        # since it can blend timings from calls at different sizes/dtypes.
+        # The last monitored call is only a self-reported diagnostic. The
+        # nonce-bound wrapper proves that do_bench returned this value, but it
+        # cannot prove which callable, shape, dtype, or output was measured.
         last_timings = [float(value) for value in LAST_TIMING_MARKER_RE.findall(exec_output)]
-        candidate_ms = last_timings[-1] if last_timings else out.get("timing_ms")
+        candidate_ms = last_timings[-1] if last_timings else None
         if candidate_ms:
+            out["candidate_reported_timing_ms"] = candidate_ms
             reference_ms = benchmark_reference(prompt_meta, gpu_index=self.gpu_index)
             if reference_ms is not None:
-                speedup = reference_ms / candidate_ms
                 out["reference_timing_ms"] = reference_ms
-                out["speedup"] = speedup
-                # 2x the PyTorch reference maps to the max bonus; EVAL.md-style
-                # caution applies (see anti_cheat.py) -- anything wildly beyond
-                # that is more likely a measurement artifact than a real win.
-                out["normalized_speedup"] = max(0.0, min(1.0, speedup / 2.0))
-                out["fast_1"] = speedup > 1.0
-                out["fast_2"] = speedup >= 2.0
+                out["self_reported_speedup"] = reference_ms / candidate_ms
+                out["speedup_eligible"] = False
+                out["speedup_ineligible_reason"] = (
+                    "candidate controls benchmark callable/inputs/dtype; "
+                    "canonical-shape correctness is not harness-verified"
+                )
         return out
 
     @staticmethod
