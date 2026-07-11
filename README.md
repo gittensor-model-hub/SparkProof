@@ -14,8 +14,7 @@ plausible-looking text.
 A distillation dataset is only as trustworthy as its provenance. SPARKPROOF's goal is
 **verifiable data provenance**: prove a training sample was produced by a pinned teacher
 model, at a pinned reasoning effort, and — for code — actually validated by running it, not
-just accepted on the teacher's word. Run entirely on your **RTX PRO 6000 Blackwell CC VM** —
-no Polaris, no CPU TDX:
+just accepted on the teacher's word. Run entirely on your **RTX PRO 6000 Blackwell CC VM**:
 
 1. Calls teachers via **OpenRouter** (`reasoning.effort: xhigh`)
 2. **Compiles and executes** Triton 3.7.1 kernels on Blackwell
