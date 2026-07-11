@@ -29,7 +29,9 @@ def test_trajectory_to_messages_record_builds_messages_and_metadata():
         "response": "kernel code",
         "prompt": "write a kernel",
         "provider": "anthropic",
+        "model": "claude-fable-5",
         "gateway": "openrouter",
+        "gateway_model": "anthropic/claude-fable-5",
         "sparkproof_validation": {"passed": True, "benchmark": {"composite_score": 0.8}},
         "metadata": {"prompt_meta": {"task_id": "t1", "category": "translation"}},
     }
@@ -39,14 +41,29 @@ def test_trajectory_to_messages_record_builds_messages_and_metadata():
     assert record["messages"][2] == {"role": "assistant", "content": "kernel code"}
     assert record["metadata"] == {
         "provider": "anthropic",
+        "model": "claude-fable-5",
         "gateway": "openrouter",
+        "gateway_model": "anthropic/claude-fable-5",
         "task_id": "t1",
         "category": "translation",
         "validation_score": 0.8,
     }
 
 
-def test_trajectory_to_messages_record_wraps_reasoning_in_think_block():
+def test_trajectory_to_messages_record_includes_openai_teacher_slug():
+    trajectory = {
+        "response": "code",
+        "prompt": "p",
+        "provider": "openai",
+        "model": "gpt-5.6",
+        "gateway": "yunwu",
+        "gateway_model": "gpt-5.6-sol",
+    }
+    record = trajectory_to_messages_record(trajectory)
+    assert record["metadata"]["provider"] == "openai"
+    assert record["metadata"]["model"] == "gpt-5.6"
+    assert record["metadata"]["gateway_model"] == "gpt-5.6-sol"
+
     trajectory = {"response": "code", "prompt": "p", "reasoning": "  step by step  "}
     record = trajectory_to_messages_record(trajectory)
     assert record["messages"][2]["content"] == "<think>\nstep by step\n</think>\n\ncode"

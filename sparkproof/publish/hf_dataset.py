@@ -24,10 +24,14 @@ def trajectory_to_messages_record(trajectory: dict[str, Any]) -> dict[str, Any] 
 
     meta = {
         "provider": trajectory.get("provider"),
+        "model": trajectory.get("model"),
         "gateway": trajectory.get("gateway"),
         "task_id": (trajectory.get("metadata") or {}).get("prompt_meta", {}).get("task_id"),
         "category": (trajectory.get("metadata") or {}).get("prompt_meta", {}).get("category"),
     }
+    gateway_model = trajectory.get("gateway_model") or trajectory.get("openrouter_model")
+    if gateway_model:
+        meta["gateway_model"] = gateway_model
     if validation:
         meta["validation_score"] = (validation.get("benchmark") or {}).get("composite_score")
 
