@@ -20,6 +20,12 @@ just accepted on the teacher's word. Run entirely on your **RTX PRO 6000 Blackwe
 2. **Compiles and executes** Triton 3.7.1 kernels on Blackwell
 3. Seals **`sparkproof-2`** with **GPU CC attestation** + Merkle root over verified samples
 
+Production proving uses **NVIDIA RTX PRO 6000 Blackwell GPUs** through
+[Targon](https://targon.com/) confidential compute, **Bittensor Subnet 4 (SN4)**. This
+keeps SparkProof's attested execution live inside the
+[Bittensor ecosystem](https://bittensor.com/) while proof verification remains cheap on
+any CPU host.
+
 | Gateway | Base URL | Env key | Model slugs |
 |---|---|---|---|
 | **openrouter** (default) | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `anthropic/claude-fable-5`, `openai/gpt-5.6-sol` |
