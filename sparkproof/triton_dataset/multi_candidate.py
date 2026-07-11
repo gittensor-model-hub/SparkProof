@@ -175,7 +175,10 @@ def generate_best_of_n(
     validator = validator or TritonKernelValidator(gpu_index=gpu_index)
     prompt = prompt_record["prompt"]
     system = prompt_record.get("system")
-    meta = {k: prompt_record[k] for k in prompt_record if k not in {"prompt", "system"}}
+    # Keep the original (pre-repair) prompt in metadata so checkpoint-based
+    # recovery (dpo_export.enrich_adjudication_with_responses) can backfill
+    # it later; per-attempt repair prompts never overwrite this copy.
+    meta = {k: prompt_record[k] for k in prompt_record if k != "system"}
 
     candidates: list[CandidateResult] = []
     for provider in providers:
@@ -237,6 +240,17 @@ def generate_best_candidate(
         capture_ir=capture_ir,
         validator=validator,
     )
+    candidate_rows = [
+        {
+            "provider": candidate.provider,
+            "passed": candidate.validation.get("passed", False),
+            "score": candidate.score,
+            "repairs_used": candidate.repairs_used,
+            "validation": candidate.validation,
+            "response": candidate.record.get("response", ""),
+        }
+        for candidate in all_candidates
+    ]
     if winner is not None:
         return {
             "passed": True,
@@ -245,6 +259,7 @@ def generate_best_candidate(
             "tier": winner.record.get("metadata", {}).get("tier", "gold"),
             "trajectory": winner.record,
             "provider": winner.provider,
+            "candidates": candidate_rows,
         }
     failed = all_candidates[0] if all_candidates else None
     return {
@@ -252,4 +267,6 @@ def generate_best_candidate(
         "response": failed.record["response"] if failed else "",
         "validation": failed.validation if failed else {"passed": False, "fail_reason": "no_candidates"},
         "tier": "reject",
+        "provider": failed.provider if failed else None,
+        "candidates": candidate_rows,
     }

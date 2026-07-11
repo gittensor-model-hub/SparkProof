@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import ast
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
 from typing import Any
+
+from sparkproof.triton_dataset.python_runner import run_python_source
 
 PASS_MARKER = "SPARKPROOF_TRITON_PASS"
 SEED_PASS_MARKER = "SPARKPROOF_ADVERSARIAL_SEED_PASS"
@@ -16,28 +13,36 @@ SEED_PASS_MARKER = "SPARKPROOF_ADVERSARIAL_SEED_PASS"
 ADVERSARIAL_SEEDS = (0, 7, 42)
 
 
-def strip_seed_overrides(code: str) -> str:
-    """Remove top-level/manual seed resets so external seeds actually vary inputs."""
+def rewrite_seed_overrides(code: str) -> str:
+    """Force candidate seed calls to use the externally selected seed.
 
-    class SeedCallRemover(ast.NodeTransformer):
-        def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
+    Rewriting the argument preserves non-empty Python suites; deleting a seed
+    call could leave a function or conditional body syntactically invalid.
+    """
+
+    class SeedCallRewriter(ast.NodeTransformer):
+        def visit_Call(self, node: ast.Call) -> ast.Call:
             node = self.generic_visit(node)
-            if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
-                return node
-            function = node.value.func
+            function = node.func
             if isinstance(function, ast.Attribute) and function.attr in {"manual_seed", "manual_seed_all"}:
-                return None
+                node.args = [ast.Name(id="_sparkproof_seed", ctx=ast.Load())]
+                node.keywords = []
             return node
 
     tree = ast.parse(code)
-    transformed = SeedCallRemover().visit(tree)
+    transformed = SeedCallRewriter().visit(tree)
     ast.fix_missing_locations(transformed)
     return ast.unparse(transformed) + "\n"
 
 
+def strip_seed_overrides(code: str) -> str:
+    """Backward-compatible alias for the seed-rewrite behavior."""
+    return rewrite_seed_overrides(code)
+
+
 def build_adversarial_wrapper(code: str) -> str:
     """Build one top-level execution; the parent process supplies the seed."""
-    code = strip_seed_overrides(code)
+    code = rewrite_seed_overrides(code)
     return f"""
 import os
 import torch
@@ -66,39 +71,24 @@ def run_adversarial_execution(
     seeds: tuple[int, ...] = ADVERSARIAL_SEEDS,
 ) -> dict[str, Any]:
     wrapped = build_adversarial_wrapper(code)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(wrapped)
-        tmpfile = f.name
-    try:
-        outputs: list[str] = []
-        passed_seeds: list[int] = []
-        for seed in seeds:
-            env = os.environ.copy()
-            env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-            env["SPARKPROOF_ADVERSARIAL_SEED"] = str(seed)
-            try:
-                proc = subprocess.run(
-                    [sys.executable, tmpfile],
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    env=env,
-                )
-            except subprocess.TimeoutExpired:
-                outputs.append(f"seed={seed}: TIMEOUT")
-                continue
-            output = proc.stdout + proc.stderr
-            outputs.append(f"seed={seed}:\n{output}")
-            marker = f"{SEED_PASS_MARKER}:{seed}"
-            if proc.returncode == 0 and marker in proc.stdout and PASS_MARKER in proc.stdout:
-                passed_seeds.append(seed)
-        combined_output = "\n".join(outputs)
-        return {
-            "passed": len(passed_seeds) == len(seeds),
-            "seed_passes": len(passed_seeds),
-            "seed_total": len(seeds),
-            "passed_seeds": passed_seeds,
-            "output_tail": combined_output[-2500:],
-        }
-    finally:
-        Path(tmpfile).unlink(missing_ok=True)
+    outputs: list[str] = []
+    passed_seeds: list[int] = []
+    for seed in seeds:
+        execution = run_python_source(
+            wrapped,
+            gpu_index=gpu_index,
+            timeout=timeout,
+            env_overrides={"SPARKPROOF_ADVERSARIAL_SEED": str(seed)},
+        )
+        outputs.append(f"seed={seed}:\n{execution.output}")
+        marker = f"{SEED_PASS_MARKER}:{seed}"
+        if execution.returncode == 0 and marker in execution.stdout and PASS_MARKER in execution.stdout:
+            passed_seeds.append(seed)
+    combined_output = "\n".join(outputs)
+    return {
+        "passed": len(passed_seeds) == len(seeds),
+        "seed_passes": len(passed_seeds),
+        "seed_total": len(seeds),
+        "passed_seeds": passed_seeds,
+        "output_tail": combined_output[-2500:],
+    }

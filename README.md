@@ -160,10 +160,10 @@ SparkProof should test generated kernels independently across:
 - multiple random seeds and extreme values for reductions or exponentials;
 - unseen shapes that were not supplied to the teacher.
 
-Anti-cheating checks should inspect the launcher AST, disable forbidden PyTorch fallback
-operations during validation, confirm that the custom kernel launches, and verify that output
-buffers are written by that launch. Replacing a JIT kernel body with `pass` is not a reliable
-general anti-cheating test.
+Anti-cheating checks inspect the launcher AST and its local helper call graph, reject forbidden
+PyTorch compute fallbacks there, and confirm that a custom Triton kernel uses grid-launch
+syntax. PyTorch reference operations remain allowed in top-level correctness tests. Replacing
+a JIT kernel body with `pass` is not a reliable general anti-cheating test.
 
 ### Reasoning and debugging records
 
@@ -201,9 +201,27 @@ Suggested scale:
 4. Preference training: at least 5,000 measured winner/loser pairs.
 5. Execution RL: correctness plus measured performance reward.
 
-The next dataset components to add are an external adversarial correctness harness, real
-broken-kernel error capture, benchmark-pair generation, NCU/IR artifact collection,
-AST-based fallback detection, and ancestry-aware dataset splitting.
+SparkProof now includes launcher-scoped AST fallback detection, multi-seed adversarial
+execution, real broken-kernel error capture, monitored `triton.testing.do_bench` preference
+pairs, optional TTIR/TTGIR/PTX capture, and component-aware dataset splitting. Strict and IR
+validation are reapplied at the Blackwell proving boundary, so generation evidence cannot be
+silently downgraded:
+
+```bash
+uv run sparkproof-triton-generate \
+  --prompts prompts/full.jsonl \
+  --out bundles/run-001 \
+  --strict-validate --benchmark --capture-ir \
+  --export-dpo bundles/run-001/dpo.jsonl
+
+uv run sparkproof-prove \
+  --bundle bundles/run-001 \
+  --strict-validate --benchmark --capture-ir
+```
+
+Operation-specific external shape/layout harnesses and representative NCU metric collection
+remain future work; the current generic adversarial gate varies random seeds and relies on
+verified task tests for shape, dtype, and stride coverage.
 
 ## Bundle layout
 

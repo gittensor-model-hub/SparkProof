@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
                 failure = record_failure(
                     run_id=run_id,
                     task=prompt_record,
-                    model=providers[0],
+                    model=failed.provider,
                     validation=failed.validation,
                     response=failed.record.get("response", ""),
                 )
@@ -293,6 +293,11 @@ def main(argv: list[str] | None = None) -> int:
         pairs = export_dpo_jsonl(enriched, min_speedup=args.dpo_min_speedup)
         count = write_dpo_jsonl(args.export_dpo, pairs)
         print(f"exported {count} DPO preference pairs to {args.export_dpo}", file=sys.stderr)
+        if count == 0:
+            print(
+                "warning: no task had two passing, monitored benchmarks above the speedup threshold",
+                file=sys.stderr,
+            )
 
     print(
         f"multi-candidate: {len(trajectories)} winners from {len(adjudication)} prompts",
@@ -308,6 +313,8 @@ def main(argv: list[str] | None = None) -> int:
             args.out,
             gpu_index=args.gpu,
             benchmark=args.benchmark,
+            strict_validate=args.strict_validate,
+            capture_ir=args.capture_ir,
             attest_gpu=not args.no_gpu_attest,
             min_pass_rate=args.min_pass_rate,
         )

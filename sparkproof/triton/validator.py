@@ -3,21 +3,18 @@
 from __future__ import annotations
 
 import ast
-import os
 import re
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
+import secrets
 from typing import Any
 
 from sparkproof.blackwell.gpu import require_blackwell_gpu
 from sparkproof.triton_dataset.adversarial_harness import run_adversarial_execution
 from sparkproof.triton_dataset.anti_cheat import analyze_anti_cheat
 from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
+from sparkproof.triton_dataset.python_runner import run_python_source
 
 PASS_MARKER = "SPARKPROOF_TRITON_PASS"
-TIMING_MARKER_RE = re.compile(r"SPARKPROOF_TRITON_TIMING_MS\s*[:=]\s*(\d+(?:\.\d+)?)")
+TIMING_MARKER_RE = re.compile(r"SPARKPROOF_TRUSTED_TIMING_MS\s*[:=]\s*(\d+(?:\.\d+)?)")
 TRITON_VERSION = "3.7.1"
 
 
@@ -63,13 +60,42 @@ class TritonKernelValidator:
             result["modern"] = False
         return result
 
-    def compile_and_execute(self, code: str, timeout: int = 120) -> tuple[bool, str]:
+    def compile_and_execute(
+        self,
+        code: str,
+        timeout: int = 120,
+        *,
+        monitor_benchmark: bool = False,
+    ) -> tuple[bool, str]:
         require_blackwell_gpu(self.gpu_index)
+        benchmark_setup = ""
+        benchmark_report = ""
+        timing_nonce = secrets.token_hex(16)
+        if monitor_benchmark:
+            benchmark_setup = """
+import numbers
+import triton.testing
+_sparkproof_timings = []
+_sparkproof_original_do_bench = triton.testing.do_bench
+def _sparkproof_monitored_do_bench(*args, **kwargs):
+    result = _sparkproof_original_do_bench(*args, **kwargs)
+    if isinstance(result, numbers.Real):
+        _sparkproof_timings.append(float(result))
+    return result
+triton.testing.do_bench = _sparkproof_monitored_do_bench
+"""
+            benchmark_report = f"""
+    if _sparkproof_timings:
+        _sparkproof_timings.sort()
+        _sparkproof_median = _sparkproof_timings[len(_sparkproof_timings) // 2]
+        print(f"SPARKPROOF_MONITORED_TIMING_{timing_nonce}: {{_sparkproof_median}}")
+"""
         wrapped = f"""
 import torch
 import triton
 import triton.language as tl
 import sys
+{benchmark_setup}
 
 torch.manual_seed(42)
 if not torch.cuda.is_available():
@@ -77,31 +103,30 @@ if not torch.cuda.is_available():
 
 try:
 {self._indent(code, 4)}
+{benchmark_report}
     print("{PASS_MARKER}")
 except Exception as e:
     print(f"SPARKPROOF_TRITON_FAIL: {{type(e).__name__}}: {{e}}")
     sys.exit(1)
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(wrapped)
-            tmpfile = f.name
-        try:
-            env = os.environ.copy()
-            env["CUDA_VISIBLE_DEVICES"] = str(self.gpu_index)
-            env["TRITON_PRINT_AUTOTUNING"] = "0"
-            proc = subprocess.run(
-                [sys.executable, tmpfile],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=env,
+        execution = run_python_source(
+            wrapped,
+            gpu_index=self.gpu_index,
+            timeout=timeout,
+            env_overrides={"TRITON_PRINT_AUTOTUNING": "0"},
+        )
+        output = TIMING_MARKER_RE.sub("", execution.output)
+        if monitor_benchmark:
+            monitored_pattern = re.compile(
+                rf"SPARKPROOF_MONITORED_TIMING_{timing_nonce}\s*:\s*(\d+(?:\.\d+)?)"
             )
-            output = proc.stdout + proc.stderr
-            return PASS_MARKER in proc.stdout, output
-        except subprocess.TimeoutExpired:
-            return False, "TIMEOUT"
-        finally:
-            Path(tmpfile).unlink(missing_ok=True)
+            monitored = monitored_pattern.findall(execution.output)
+            if monitored:
+                output += f"\nSPARKPROOF_TRUSTED_TIMING_MS: {monitored[-1]}\n"
+        return (
+            execution.returncode == 0 and PASS_MARKER in execution.stdout,
+            output,
+        )
 
     def validate_response(
         self,
@@ -130,7 +155,10 @@ except Exception as e:
             if not anti_cheat["passed"]:
                 return self._result(False, code, stages, "anti_cheat_failed")
 
-        exec_ok, exec_output = self.compile_and_execute(code)
+        exec_ok, exec_output = self.compile_and_execute(
+            code,
+            monitor_benchmark=run_benchmark,
+        )
         stages["compile_execute"] = {"passed": exec_ok, "output_tail": exec_output[-2000:]}
         if not exec_ok:
             return self._result(False, code, stages, "compile_execute_failed")
@@ -194,7 +222,7 @@ except Exception as e:
             timings.sort()
             out["timing_ms"] = timings[len(timings) // 2]
             out["timing_samples"] = len(timings)
-            out["timing_method"] = "candidate_triton_do_bench"
+            out["timing_method"] = "monitored_triton_do_bench"
         return out
 
     @staticmethod

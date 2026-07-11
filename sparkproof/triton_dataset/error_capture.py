@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
 from typing import Any
 
 from sparkproof.blackwell.gpu import require_blackwell_gpu
 from sparkproof.triton_dataset.failure_miner import classify_failure
+from sparkproof.triton_dataset.python_runner import run_python_source
 
 
 def capture_execution_error(
@@ -39,41 +35,27 @@ except Exception as e:
     print(f"SPARKPROOF_TRITON_FAIL: {{type(e).__name__}}: {{e}}")
     sys.exit(1)
 """
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(wrapped)
-        tmpfile = f.name
-    try:
-        env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-        proc = subprocess.run(
-            [sys.executable, tmpfile],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-        )
-        output = proc.stdout + proc.stderr
-        passed = "SPARKPROOF_TRITON_PASS" in proc.stdout and proc.returncode == 0
-        validation = {
-            "passed": passed,
-            "fail_reason": None if passed else "compile_execute_failed",
-            "stages": {"compile_execute": {"output_tail": output[-2500:]}},
-        }
-        return {
-            "passed": passed,
-            "output_tail": output[-2500:],
-            "failure_class": classify_failure(validation) if not passed else "pass",
-            "returncode": proc.returncode,
-        }
-    except subprocess.TimeoutExpired:
+    execution = run_python_source(wrapped, gpu_index=gpu_index, timeout=timeout)
+    if execution.timed_out:
         return {
             "passed": False,
             "output_tail": "TIMEOUT",
             "failure_class": "runtime_error",
-            "returncode": -1,
+            "returncode": execution.returncode,
         }
-    finally:
-        Path(tmpfile).unlink(missing_ok=True)
+    output = execution.output
+    passed = "SPARKPROOF_TRITON_PASS" in execution.stdout and execution.returncode == 0
+    validation = {
+        "passed": passed,
+        "fail_reason": None if passed else "compile_execute_failed",
+        "stages": {"compile_execute": {"output_tail": output[-2500:]}},
+    }
+    return {
+        "passed": passed,
+        "output_tail": output[-2500:],
+        "failure_class": classify_failure(validation) if not passed else "pass",
+        "returncode": execution.returncode,
+    }
 
 
 def enrich_mutation_prompt(prompt: dict[str, Any], *, gpu_index: int = 0) -> dict[str, Any]:

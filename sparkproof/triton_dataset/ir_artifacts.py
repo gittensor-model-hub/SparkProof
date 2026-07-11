@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import shutil
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from sparkproof.triton_dataset.python_runner import run_python_source
 
 
 def capture_ir_artifacts(
@@ -19,24 +18,18 @@ def capture_ir_artifacts(
 ) -> dict[str, Any]:
     """Execute candidate code and collect files emitted by Triton's dump hook."""
     dump_dir = Path(tempfile.mkdtemp(prefix="sparkproof-triton-ir-"))
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(code)
-        tmpfile = f.name
     try:
-        env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-        env["TRITON_KERNEL_DUMP"] = "1"
-        env["TRITON_ALWAYS_COMPILE"] = "1"
-        env["TRITON_DUMP_DIR"] = str(dump_dir)
-        env["TRITON_PRINT_AUTOTUNING"] = "0"
-        proc = subprocess.run(
-            [sys.executable, tmpfile],
-            capture_output=True,
-            text=True,
+        execution = run_python_source(
+            code,
+            gpu_index=gpu_index,
             timeout=timeout,
-            env=env,
+            env_overrides={
+                "TRITON_KERNEL_DUMP": "1",
+                "TRITON_ALWAYS_COMPILE": "1",
+                "TRITON_DUMP_DIR": str(dump_dir),
+                "TRITON_PRINT_AUTOTUNING": "0",
+            },
         )
-        output = proc.stdout + proc.stderr
         artifacts: dict[str, str] = {}
         for suffix in ("ttir", "ttgir", "ptx"):
             matches = sorted(dump_dir.rglob(f"*.{suffix}"))
@@ -48,13 +41,10 @@ def capture_ir_artifacts(
         return {
             "available": bool(artifacts),
             "artifacts": artifacts,
-            "output_tail": output[-1500:],
-            "returncode": proc.returncode,
+            "output_tail": execution.output[-1500:],
+            "returncode": execution.returncode,
         }
-    except subprocess.TimeoutExpired:
-        return {"available": False, "artifacts": {}, "output_tail": "TIMEOUT", "returncode": -1}
     finally:
-        Path(tmpfile).unlink(missing_ok=True)
         shutil.rmtree(dump_dir, ignore_errors=True)
 
 
