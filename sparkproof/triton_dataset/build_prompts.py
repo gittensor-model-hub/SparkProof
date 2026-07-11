@@ -19,7 +19,9 @@ from sparkproof.triton_dataset.error_capture import enrich_mutation_prompt
 from sparkproof.triton_dataset.prompt_templates import apply_prompt_template
 from sparkproof.triton_dataset.prompt_filters import prompt_matches_filters
 from sparkproof.triton_dataset.reference_kernels import REFERENCE_KERNELS
+from sparkproof.triton_dataset.run_seed import SAMPLING_POLICY_VERSION, generate_run_seed, sampling_seed
 from sparkproof.triton_dataset.schema import validate_prompt_record
+from sparkproof.triton_dataset.stratified_sampling import catalog_sha256, stratified_sample
 from sparkproof.triton_dataset.task_policy import normalize_train_task
 from sparkproof.triton_dataset.mutator import iter_mutation_prompts
 from sparkproof.triton_dataset.torch_ops import iter_torch_translation_prompts
@@ -117,23 +119,20 @@ def iter_all_prompts(
     gpu_index: int = 0,
     filter_sources: frozenset[str] | None = None,
     filter_task_ids: frozenset[str] | None = None,
-    limit: int | None = None,
 ) -> Iterator[dict[str, Any]]:
+    """Yield the full eligible prompt catalog (no truncation).
+
+    Selecting a subset (e.g. for `--limit`) is `build_prompts_file`'s job via
+    stratified sampling — this function only decides *eligibility* (sources,
+    filters), never *how many*, so callers always see the complete catalog to
+    sample from.
+    """
     sources = include_sources or DEFAULT_TRAIN_SOURCES
-    emitted = 0
 
     def emit(record: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        nonlocal emitted
-        if limit is not None and emitted >= limit:
-            return
         out = _yield_if_matches(record, filter_sources=filter_sources, filter_task_ids=filter_task_ids)
-        if out is None:
-            return
-        emitted += 1
-        yield out
-
-    def limit_reached() -> bool:
-        return limit is not None and emitted >= limit
+        if out is not None:
+            yield out
 
     doc_kinds = doc_kinds_for_sources(sources)
     if doc_kinds:
@@ -170,24 +169,15 @@ def iter_all_prompts(
         if not chunks and CHUNK_API_SYMBOL in doc_kinds:
             chunks = api_unit_chunks_from_registry()
         for chunk in chunks:
-            if limit_reached():
-                break
             rec = prompt_from_doc_chunk(chunk)
             rec.setdefault("origin", rec.get("source", "api_doc"))
             if apply_templates:
                 rec = apply_prompt_template(rec)
             yield from emit(rec)
 
-    if limit_reached():
-        return
-
     if "mutation" in sources:
         for name, code in REFERENCE_KERNELS.items():
-            if limit_reached():
-                break
             for rec in iter_mutation_prompts(task_id=name, valid_kernel=code):
-                if limit_reached():
-                    break
                 rec.setdefault("origin", "mutation")
                 rec.setdefault("ground_truth_code", code)
                 if capture_mutation_errors:
@@ -196,35 +186,20 @@ def iter_all_prompts(
                     rec = apply_prompt_template(rec)
                 yield from emit(rec)
 
-    if limit_reached():
-        return
-
     if "torch_op" in sources:
         for rec in iter_torch_translation_prompts(include_shape_variants=torch_shape_variants):
-            if limit_reached():
-                break
             rec.setdefault("origin", "torch_op")
             if apply_templates:
                 rec = apply_prompt_template(rec)
             yield from emit(rec)
 
-    if limit_reached():
-        return
-
     if "failure_mining" in sources and mined_prompts_path and mined_prompts_path.exists():
         for rec in _load_jsonl_prompts(mined_prompts_path):
-            if limit_reached():
-                break
             rec.setdefault("origin", "failure_mining")
             yield from emit(rec)
 
-    if limit_reached():
-        return
-
     if "self_evolution" in sources and evolved_prompts_path and evolved_prompts_path.exists():
         for rec in _load_jsonl_prompts(evolved_prompts_path):
-            if limit_reached():
-                break
             rec.setdefault("origin", "self_evolution")
             yield from emit(rec)
 
@@ -282,25 +257,61 @@ def build_prompts_file(
     gpu_index: int = 0,
     filter_sources: frozenset[str] | None = None,
     filter_task_ids: frozenset[str] | None = None,
+    run_seed: str | None = None,
+    sampling_policy: str = SAMPLING_POLICY_VERSION,
+    max_bucket_share: float = 0.25,
 ) -> int:
+    """Build the eligible catalog, sample up to `limit` deterministically from
+    `run_seed`, and write it out. Sampling provenance (policy, run_seed,
+    catalog_sha256, bucket_counts) is written alongside as
+    `<out_path>.sampling.json` — auto-generating and persisting `run_seed`
+    when omitted so the exact run can be replayed later.
+    """
     from sparkproof.triton_dataset.dataset_split import assign_splits
 
-    records = iter_all_prompts(
-        doc_dir=doc_dir,
-        mined_prompts_path=mined_prompts_path,
-        evolved_prompts_path=evolved_prompts_path,
-        include_sources=sources,
-        auto_fetch_docs=auto_fetch_docs,
-        enrich_api_pages=enrich_api_pages,
-        strict_docs=strict_docs,
-        capture_mutation_errors=capture_mutation_errors,
-        apply_templates=apply_templates,
-        torch_shape_variants=torch_shape_variants,
-        gpu_index=gpu_index,
-        filter_sources=filter_sources,
-        filter_task_ids=filter_task_ids,
-        limit=limit,
+    catalog = list(
+        iter_all_prompts(
+            doc_dir=doc_dir,
+            mined_prompts_path=mined_prompts_path,
+            evolved_prompts_path=evolved_prompts_path,
+            include_sources=sources,
+            auto_fetch_docs=auto_fetch_docs,
+            enrich_api_pages=enrich_api_pages,
+            strict_docs=strict_docs,
+            capture_mutation_errors=capture_mutation_errors,
+            apply_templates=apply_templates,
+            torch_shape_variants=torch_shape_variants,
+            gpu_index=gpu_index,
+            filter_sources=filter_sources,
+            filter_task_ids=filter_task_ids,
+        )
     )
+    catalog_hash = catalog_sha256(catalog)
+    resolved_run_seed = run_seed or generate_run_seed()
+    seed = sampling_seed(catalog_hash, resolved_run_seed, sampling_policy)
+    sampled, bucket_counts = stratified_sample(catalog, limit=limit, seed=seed, max_share=max_bucket_share)
+
+    records: Iterable[dict[str, Any]] = sampled
     if assign_dev_splits:
         records = assign_splits(records, dev_fraction=dev_fraction)
-    return write_prompts_jsonl(out_path, records)
+    count = write_prompts_jsonl(out_path, records)
+
+    sampling_report_path = out_path.with_suffix(".sampling.json")
+    sampling_report_path.write_text(
+        json.dumps(
+            {
+                "policy": sampling_policy,
+                "run_seed": resolved_run_seed,
+                "catalog_sha256": catalog_hash,
+                "catalog_size": len(catalog),
+                "requested_limit": limit,
+                "max_bucket_share": max_bucket_share,
+                "bucket_counts": bucket_counts,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return count

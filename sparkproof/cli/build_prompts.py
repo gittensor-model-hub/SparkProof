@@ -14,6 +14,7 @@ from sparkproof.triton_dataset.build_prompts import (
     build_prompts_file,
 )
 from sparkproof.triton_dataset.prompt_filters import parse_filter_set
+from sparkproof.triton_dataset.run_seed import SAMPLING_POLICY_VERSION
 from sparkproof.hashing import sha256_file
 
 
@@ -63,6 +64,25 @@ def main(argv: list[str] | None = None) -> int:
         help="assign ancestry-aware train/dev splits (default keeps all train)",
     )
     parser.add_argument("--dev-fraction", type=float, default=0.1)
+    parser.add_argument(
+        "--run-seed",
+        default=None,
+        help="hex entropy for stratified sampling (identity-free; auto-generated and "
+        "printed/persisted in the sampling report if omitted, so the exact selection "
+        "can be replayed)",
+    )
+    parser.add_argument(
+        "--sampling-policy",
+        default=SAMPLING_POLICY_VERSION,
+        help="sampling policy version recorded in provenance (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--max-bucket-share",
+        type=float,
+        default=0.25,
+        help="max share of --limit a single (source, family) bucket may claim, "
+        "while other buckets still have supply (default: 0.25)",
+    )
     parser.add_argument("--gpu", type=int, default=0, help="GPU index for mutation error capture")
     parser.add_argument("--mined-prompts", type=Path, default=None, help="failure-mined tasks jsonl")
     parser.add_argument("--evolved-prompts", type=Path, default=None, help="self-evolved tasks jsonl")
@@ -105,7 +125,18 @@ def main(argv: list[str] | None = None) -> int:
         gpu_index=args.gpu,
         filter_sources=parse_filter_set(args.filter_sources),
         filter_task_ids=parse_filter_set(args.filter_task_ids),
+        run_seed=args.run_seed,
+        sampling_policy=args.sampling_policy,
+        max_bucket_share=args.max_bucket_share,
     )
+    sampling_report_path = args.out.with_suffix(".sampling.json")
+    sampling_report = json.loads(sampling_report_path.read_text(encoding="utf-8"))
+    if not args.run_seed:
+        print(
+            f"generated run seed (persist to replay this selection): {sampling_report['run_seed']}",
+            file=sys.stderr,
+        )
+
     report_path = args.report or args.out.with_suffix(".report.json")
     source_counts: Counter[str] = Counter()
     category_counts: Counter[str] = Counter()
@@ -124,10 +155,12 @@ def main(argv: list[str] | None = None) -> int:
         "sources": dict(sorted(source_counts.items())),
         "categories": dict(sorted(category_counts.items())),
         "strict_docs": not args.allow_partial_docs,
+        "sampling": sampling_report,
     }
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {count} Triton prompts to {args.out}", file=sys.stderr)
     print(f"build report: {report_path}", file=sys.stderr)
+    print(f"sampling report: {sampling_report_path}", file=sys.stderr)
     return 0
 
 

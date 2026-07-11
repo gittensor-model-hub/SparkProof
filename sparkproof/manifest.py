@@ -30,6 +30,7 @@ class DatasetManifest:
     prompts_sha256: str
     created_at: str
     attestation_hash: str | None = None
+    sampling: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -46,6 +47,8 @@ class DatasetManifest:
         }
         if self.attestation_hash is not None:
             out["attestation_hash"] = self.attestation_hash
+        if self.sampling is not None:
+            out["sampling"] = self.sampling
         return out
 
 
@@ -56,6 +59,7 @@ def build_manifest(
     openrouter_generation_config: dict[str, Any],
     gateway: str | None = None,
     attestation_hash: str | None = None,
+    sampling: dict[str, Any] | None = None,
 ) -> DatasetManifest:
     gateway_name = gateway or (trajectories[0].get("gateway") if trajectories else None) or "openrouter"
     for record in trajectories:
@@ -74,6 +78,7 @@ def build_manifest(
         prompts_sha256=prompts_sha256,
         created_at=datetime.datetime.now(datetime.UTC).isoformat(),
         attestation_hash=attestation_hash,
+        sampling=sampling,
     )
 
 
@@ -97,6 +102,7 @@ class BlackwellDatasetManifest:
     gpu_profile: dict[str, Any]
     validation: dict[str, Any]
     attestation_hash: str | None = None
+    sampling: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -117,6 +123,8 @@ class BlackwellDatasetManifest:
         }
         if self.attestation_hash is not None:
             out["attestation_hash"] = self.attestation_hash
+        if self.sampling is not None:
+            out["sampling"] = self.sampling
         return out
 
 
@@ -130,6 +138,7 @@ def build_manifest_v2(
     openrouter_generation_config: dict[str, Any],
     gateway: str | None = None,
     attestation_hash: str | None = None,
+    sampling: dict[str, Any] | None = None,
 ) -> BlackwellDatasetManifest:
     gateway_name = gateway or (trajectories[0].get("gateway") if trajectories else None) or "openrouter"
     for record in trajectories:
@@ -160,4 +169,5 @@ def build_manifest_v2(
             "benchmark_enabled": benchmark_enabled,
         },
         attestation_hash=attestation_hash,
+        sampling=sampling,
     )
