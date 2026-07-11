@@ -164,6 +164,7 @@ def test_proof_artifacts_list_matches_known_bundle_files():
         "manifest.json",
         "dataset_manifest.json",
         "gpu_attestation.json",
+        "novelty_report.json",
         "validation_report.jsonl",
         "prompts.jsonl",
         "trajectories.jsonl",
