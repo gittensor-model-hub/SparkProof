@@ -98,6 +98,7 @@ def prove_blackwell_bundle(
             run_benchmark=benchmark,
             strict=strict_validate,
             capture_ir=capture_ir,
+            prompt_meta=(record.get("metadata") or {}).get("prompt_meta"),
         )
         validation_reports.append(
             {
@@ -188,6 +189,7 @@ def prove_blackwell_trajectories(
             run_benchmark=benchmark,
             strict=strict_validate,
             capture_ir=capture_ir,
+            prompt_meta=(record.get("metadata") or {}).get("prompt_meta"),
         )
         if validation["passed"]:
             stamped = dict(record)

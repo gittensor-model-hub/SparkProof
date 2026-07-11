@@ -128,6 +128,7 @@ def evolve_verified_trajectory(
         "torch_reference": meta.get("torch_reference"),
         "ground_truth_code": meta.get("ground_truth_code"),
         "reference_expr": meta.get("torch_reference"),
+        "shapes": meta.get("shapes"),
         "task_family": meta.get("category"),
     }
     return evolve_parent(parent, depth=depth, run_seed=run_seed)

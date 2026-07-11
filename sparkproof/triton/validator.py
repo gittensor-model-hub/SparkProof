@@ -12,9 +12,11 @@ from sparkproof.triton_dataset.adversarial_harness import run_adversarial_execut
 from sparkproof.triton_dataset.anti_cheat import analyze_anti_cheat
 from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
 from sparkproof.triton_dataset.python_runner import run_python_source
+from sparkproof.triton_dataset.reference_bench import benchmark_reference
 
 PASS_MARKER = "SPARKPROOF_TRITON_PASS"
 TIMING_MARKER_RE = re.compile(r"SPARKPROOF_TRUSTED_TIMING_MS\s*[:=]\s*(\d+(?:\.\d+)?)")
+LAST_TIMING_MARKER_RE = re.compile(r"SPARKPROOF_LAST_TIMING_MS\s*[:=]\s*(\d+(?:\.\d+)?)")
 TRITON_VERSION = "3.7.1"
 
 
@@ -86,6 +88,7 @@ triton.testing.do_bench = _sparkproof_monitored_do_bench
 """
             benchmark_report = f"""
     if _sparkproof_timings:
+        print(f"SPARKPROOF_LAST_TIMING_{timing_nonce}: {{_sparkproof_timings[-1]}}")
         _sparkproof_timings.sort()
         _sparkproof_median = _sparkproof_timings[len(_sparkproof_timings) // 2]
         print(f"SPARKPROOF_MONITORED_TIMING_{timing_nonce}: {{_sparkproof_median}}")
@@ -123,6 +126,10 @@ except Exception as e:
             monitored = monitored_pattern.findall(execution.output)
             if monitored:
                 output += f"\nSPARKPROOF_TRUSTED_TIMING_MS: {monitored[-1]}\n"
+            last_pattern = re.compile(rf"SPARKPROOF_LAST_TIMING_{timing_nonce}\s*:\s*(\d+(?:\.\d+)?)")
+            last = last_pattern.findall(execution.output)
+            if last:
+                output += f"\nSPARKPROOF_LAST_TIMING_MS: {last[-1]}\n"
         return (
             execution.returncode == 0 and PASS_MARKER in execution.stdout,
             output,
@@ -135,6 +142,7 @@ except Exception as e:
         run_benchmark: bool = False,
         strict: bool = False,
         capture_ir: bool = False,
+        prompt_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         code = self.extract_code(response)
         stages: dict[str, Any] = {}
@@ -171,7 +179,7 @@ except Exception as e:
 
         benchmark: dict[str, Any] | None = None
         if run_benchmark:
-            benchmark = self._benchmark_score(code, exec_output)
+            benchmark = self._benchmark_score(code, exec_output, prompt_meta)
             stages["benchmark"] = benchmark
             if benchmark["composite_score"] < 0.25:
                 return self._result(False, code, stages, "benchmark_below_floor")
@@ -203,9 +211,12 @@ except Exception as e:
             out["benchmark"] = benchmark
         return out
 
-    @staticmethod
-    def _benchmark_score(code: str, exec_output: str) -> dict[str, Any]:
-        """Score structure and consume an in-process ``triton.testing.do_bench`` timing."""
+    def _benchmark_score(
+        self, code: str, exec_output: str, prompt_meta: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Score structure, consume in-process ``do_bench`` timings, and — when the
+        task carries a PyTorch reference — compare against it for a real speedup.
+        """
         checks = {
             "correctness": 1.0 if PASS_MARKER in exec_output or "allclose" in exec_output.lower() else 0.5,
             "autotune": 1.0 if "@triton.autotune" in code else 0.0,
@@ -223,6 +234,26 @@ except Exception as e:
             out["timing_ms"] = timings[len(timings) // 2]
             out["timing_samples"] = len(timings)
             out["timing_method"] = "monitored_triton_do_bench"
+
+        # The candidate's *last* do_bench call is, by prompt convention (see
+        # torch_ops.py requirement 9), the one run at SparkProof's canonical
+        # benchmark size -- the one comparable to the reference below. The
+        # median above stays candidate-vs-candidate only (benchmark_pairs.py),
+        # since it can blend timings from calls at different sizes/dtypes.
+        last_timings = [float(value) for value in LAST_TIMING_MARKER_RE.findall(exec_output)]
+        candidate_ms = last_timings[-1] if last_timings else out.get("timing_ms")
+        if candidate_ms:
+            reference_ms = benchmark_reference(prompt_meta, gpu_index=self.gpu_index)
+            if reference_ms is not None:
+                speedup = reference_ms / candidate_ms
+                out["reference_timing_ms"] = reference_ms
+                out["speedup"] = speedup
+                # 2x the PyTorch reference maps to the max bonus; EVAL.md-style
+                # caution applies (see anti_cheat.py) -- anything wildly beyond
+                # that is more likely a measurement artifact than a real win.
+                out["normalized_speedup"] = max(0.0, min(1.0, speedup / 2.0))
+                out["fast_1"] = speedup > 1.0
+                out["fast_2"] = speedup >= 2.0
         return out
 
     @staticmethod

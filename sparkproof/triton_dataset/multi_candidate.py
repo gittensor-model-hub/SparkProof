@@ -120,6 +120,7 @@ def generate_with_repair(
             run_benchmark=run_benchmark,
             strict=strict_validate,
             capture_ir=capture_ir,
+            prompt_meta=prompt_meta,
         )
         last_record, last_validation = record, validation
         if validation["passed"]:
