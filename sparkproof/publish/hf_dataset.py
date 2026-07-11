@@ -108,7 +108,10 @@ def publish_bundle_to_hf(
     ds = Dataset.from_list(rows)
     api = HfApi()
     api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True, private=private)
-    ds.push_to_hub(repo_id, split=split, commit_message="SparkProof verified Triton trajectories")
+    # Upload proof artifacts before the dataset rows go live: if this fails partway,
+    # nothing publicly consumable has been published yet, so a failed exit code means
+    # what it says instead of leaving a public, partially-unverifiable dataset behind.
     if include_proof:
         upload_proof_artifacts(api=api, bundle_dir=bundle_dir, repo_id=repo_id)
+    ds.push_to_hub(repo_id, split=split, commit_message="SparkProof verified Triton trajectories")
     return f"https://huggingface.co/datasets/{repo_id}"
