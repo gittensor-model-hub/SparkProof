@@ -219,6 +219,24 @@ uv run sparkproof-prove \
   --strict-validate --benchmark --capture-ir
 ```
 
+The same flags are available through the full pipeline script:
+
+```bash
+scripts/run_full_diverse.sh --run-id diverse-001 \
+  --apply-templates --assign-dev-splits --torch-shape-variants \
+  --strict-validate --capture-ir --export-dpo bundles/diverse-001/dpo.jsonl
+```
+
+- `--apply-templates` wraps prompts in structured design/implementation/validation sections.
+- `--assign-dev-splits` assigns component-aware train/dev splits at prompt-build time
+  (equivalent to running `sparkproof-split-dataset` on an existing prompts file).
+- `--torch-shape-variants` adds adversarial shape presets to torch-op translation prompts.
+
+`sparkproof-export-dpo --bundle bundles/run-001 --out dpo.jsonl` recovers preference pairs
+from an existing bundle's adjudication + generation checkpoint, for bundles produced without
+`--export-dpo` at generation time. Checkpoints record winning candidates only, so recovery can
+backfill the original prompt but cannot reconstruct discarded losing candidates.
+
 Operation-specific external shape/layout harnesses and representative NCU metric collection
 remain future work; the current generic adversarial gate varies random seeds and relies on
 verified task tests for shape, dtype, and stride coverage.
