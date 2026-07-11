@@ -8,7 +8,7 @@ from typing import Any
 
 from sparkproof.blackwell.gpu import require_blackwell_gpu
 from sparkproof.gpu.attestation import GpuAttestationResult, attest_blackwell_gpu
-from sparkproof.hashing import sha256_file
+from sparkproof.hashing import canonical_json_bytes, dataset_attestation_nonce, sha256_file, sha256_hex
 from sparkproof.manifest import build_manifest_v2
 from sparkproof.triton.validator import TritonKernelValidator
 
@@ -72,15 +72,21 @@ def prove_blackwell_bundle(
 
     gpu_profile = require_blackwell_gpu(gpu_index)
 
-    gpu_attestation: GpuAttestationResult | None = None
-    if attest_gpu:
-        gpu_attestation = attest_blackwell_gpu(gpu_profile=gpu_profile)
-
     raw = _load_trajectories(trajectories_path)
     _write_jsonl(bundle_dir / "trajectories_raw.jsonl", raw)
     # Never silently downgrade evidence already required during generation.
     strict_validate = strict_validate or _has_validation_stage(raw, "anti_cheat")
     capture_ir = capture_ir or _has_validation_stage(raw, "ir_artifacts")
+
+    gpu_attestation: GpuAttestationResult | None = None
+    if attest_gpu:
+        # Bind this attested GPU session to exactly the raw trajectory content about
+        # to be validated (hashed canonically, since trajectories_raw.jsonl is a
+        # re-serialized copy of `raw` and won't be byte-identical to it), so the
+        # archive can't be swapped afterward without invalidating the nonce match
+        # checked in verify_gpu_attestation.
+        nonce = dataset_attestation_nonce(prompts_sha256 or "", sha256_hex(canonical_json_bytes(raw)))
+        gpu_attestation = attest_blackwell_gpu(gpu_profile=gpu_profile, nonce=nonce)
 
     validator = TritonKernelValidator(gpu_index=gpu_index)
     validation_reports: list[dict[str, Any]] = []
@@ -168,7 +174,10 @@ def prove_blackwell_trajectories(
     strict_validate = strict_validate or _has_validation_stage(trajectories, "anti_cheat")
     capture_ir = capture_ir or _has_validation_stage(trajectories, "ir_artifacts")
     gpu_profile = require_blackwell_gpu(gpu_index)
-    gpu_attestation = attest_blackwell_gpu(gpu_profile=gpu_profile) if attest_gpu else None
+    gpu_attestation = None
+    if attest_gpu:
+        nonce = dataset_attestation_nonce(prompts_sha256, sha256_hex(canonical_json_bytes(trajectories)))
+        gpu_attestation = attest_blackwell_gpu(gpu_profile=gpu_profile, nonce=nonce)
 
     validator = TritonKernelValidator(gpu_index=gpu_index)
     verified: list[dict[str, Any]] = []

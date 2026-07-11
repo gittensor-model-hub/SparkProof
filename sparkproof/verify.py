@@ -6,7 +6,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sparkproof.hashing import sample_leaf_hash, sha256_file, verified_sample_leaf_hash
+from sparkproof.hashing import (
+    canonical_json_bytes,
+    dataset_attestation_nonce,
+    sample_leaf_hash,
+    sha256_file,
+    sha256_hex,
+    verified_sample_leaf_hash,
+)
 from sparkproof.manifest import build_manifest, build_manifest_v2
 from sparkproof.merkle import merkle_root
 from sparkproof.gateways import ALLOWED_GATEWAYS
@@ -135,6 +142,23 @@ def verify_gpu_attestation(bundle_dir: Path, manifest: dict[str, Any]) -> list[s
     for key in ("family", "profile", "name"):
         if gpu.get(key) != manifest_gpu.get(key):
             issues.append(f"gpu_profile.{key} mismatch between manifest and gpu_attestation")
+
+    # Bundles from before nonce-binding was added won't have this field — only a
+    # mismatch (not its absence) proves trajectories_raw.jsonl was swapped after
+    # attestation, so absence alone isn't flagged as an issue.
+    actual_nonce = att.get("nonce") or (att.get("claims") or {}).get("eat_nonce") or ""
+    raw_path = bundle_dir / "trajectories_raw.jsonl"
+    if actual_nonce and raw_path.exists():
+        raw = _load_trajectories(raw_path)
+        expected_nonce = dataset_attestation_nonce(
+            manifest.get("prompts_sha256") or "", sha256_hex(canonical_json_bytes(raw))
+        )
+        if actual_nonce != expected_nonce:
+            issues.append(
+                "gpu_attestation nonce does not match this bundle's prompts_sha256 + "
+                "trajectories_raw.jsonl content — trajectories_raw.jsonl may have been "
+                "modified after attestation"
+            )
     return issues
 
 

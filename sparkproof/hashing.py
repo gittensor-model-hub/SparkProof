@@ -23,6 +23,16 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+def dataset_attestation_nonce(prompts_sha256: str, trajectories_sha256: str) -> str:
+    """Derive a GPU-attestation nonce bound to this exact prompts+trajectories content.
+
+    Used as the NVIDIA NRAS attestation nonce (echoed back signed as ``eat_nonce``)
+    so a bundle's ``trajectories_raw.jsonl`` can't be swapped after attestation
+    without invalidating the nonce match checked in ``verify_gpu_attestation``.
+    """
+    return sha256_hex(f"sparkproof-attest:{prompts_sha256}:{trajectories_sha256}".encode())
+
+
 def sample_leaf_hash(record: dict[str, Any]) -> str:
     """Hash the fields that must not change without detection (sparkproof-1)."""
     payload = {
