@@ -1,0 +1,256 @@
+# Changelog
+
+All notable changes to SparkProof are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+`generator_version` in published bundles tracks the SparkProof release that produced them (currently `0.3.0`).
+
+---
+
+## [Unreleased] — online trust anchors (PR #17)
+
+Closes the remaining gap where a miner could fabricate `gpu_attestation.json` or replay an attestation token from another bundle. Offline verification proves internal consistency; online verification anchors the bundle to NVIDIA's and (optionally) OpenRouter's external roots of trust.
+
+### Added
+
+- **`sparkproof/gpu/token_verify.py`** — cryptographic NRAS JWT verification.
+  - `extract_detached_gpu_jwt()` pulls the real NVIDIA-signed per-GPU claims JWT out of the SDK's composite token (the outer `client.get_token()` wrapper is *not* the hardware evidence).
+  - `verify_nras_token()` validates signature against NVIDIA's published JWKS (`https://nras.attestation.nvidia.com/.well-known/jwks.json`), checks issuer (`nras.attestation.nvidia.com`), measurement result (`measres` / `x-nvidia-overall-att-result`), and optional dataset-bound `eat_nonce`.
+  - Expired tokens (`exp` in the past) still verify by signature — NRAS tokens are short-lived but validators re-check bundles days later; signature validity is the trust anchor, not freshness.
+
+- **`sparkproof/verify_online.py`** — orchestrates online trust-anchor checks.
+  - `verify_attestation_signature()` re-derives the expected nonce from `manifest.prompts_sha256` + `trajectories_raw.jsonl` and verifies the stored token.
+  - `verify_openrouter_generations()` re-queries `https://openrouter.ai/api/v1/generation` for recorded generation IDs and cross-checks the routed model against the bundle record. Requires the API key that created the generation (OpenRouter scopes the endpoint per key) — miner self-audit or validator key escrow.
+  - `verify_bundle_online()` runs all available online checks and returns `{verified, issues, nras_signature_checked, openrouter_ledger_checked}`.
+
+- **`sparkproof-verify --online`** — CLI flag to run online checks after offline `verify_bundle`. Sets `report["online"]` and fails the bundle if any online issue is found. When `OPENROUTER_API_KEY` is set, also runs the OpenRouter ledger cross-check.
+
+- **`tests/test_token_verify.py`** — 10 unit tests with a local EC keypair (no network): valid signature, expired-but-signed token, forged signature, wrong nonce, wrong issuer, failed measurement, OpenRouter ledger match/mismatch, missing generation ID.
+
+### Changed
+
+- **`pyproject.toml`** — moved `pyjwt>=2.0.0` from the optional `gpu` extra to **core dependencies**, so validators without a GPU or `nv-attestation-sdk` can still verify NRAS signatures.
+
+### Security
+
+| Threat | Offline verify (PR #16) | Online verify (PR #17) |
+|---|---|---|
+| Fabricated `gpu_attestation.json` | Catches missing/malformed token, nonce mismatch vs manifest | **Catches invalid NRAS signature** — only NVIDIA can sign |
+| Token stolen from another bundle | Nonce must match this bundle's content hash | **Signed `eat_nonce` must match** re-derived nonce |
+| Post-prove trajectory swap | Raw/verified consistency + release-gate sha256 | Unchanged (already blocked) |
+| Wrong teacher model (yunwu) | Pinned slug validation at generation + verify | Unchanged |
+| Wrong teacher model (openrouter) | Manifest policy + request hashes | **Optional ledger re-query** confirms routed model |
+
+### Verified — RTX PRO 6000 Blackwell CC VM (2026-07-11)
+
+Environment: `ubuntu@157.254.50.65:20004`, NVIDIA RTX PRO 6000 Blackwell Server Edition (compute 12.0), confidential computing **ON**.
+
+| Suite | Result |
+|---|---|
+| SparkProof unit tests | **247 passed**, 9 skipped (GPU off) |
+| SparkProof GPU tests (`SPARKPROOF_RUN_GPU_TESTS=1`) | **9 passed** on real Blackwell hardware |
+| `tests/test_token_verify.py` | **10 passed** |
+| SparkDistill validator tests | **37 passed** |
+
+**Live NRAS + JWKS:**
+- Content-bound nonce attestation → `attest passed: True`, `nonce_verified: True`
+- `verify_nras_token()` against NVIDIA's live JWKS → `verified: True`, `issues: []`
+- Wrong expected nonce → rejected ("not produced for this bundle's content")
+- Forged claims + original signature → rejected ("NRAS JWT signature is INVALID")
+
+**Full pipeline e2e:**
+```
+build-prompts (4 prompts)
+  → triton-generate (--limit 2, --benchmark, --strict-validate, --capture-ir, yunwu)
+  → proved 2/2 with GPU attestation (nonce verified)
+  → release gate passed (2 rows, 0 blocked)
+  → sparkproof-verify --online → VERIFIED
+  → SparkDistill eval.dataset_verify → verified=true
+```
+
+Teachers: `claude-fable-5` (anthropic), `gpt-5.6` (openai, from `gpt-5.6-sol` gateway slug).
+
+**Tamper test:** append text to a trajectory row after proving → `dataset:REJECT` ("rows changed after release gate").
+
+---
+
+## [0.3.0] — trustless production verification (PR #16, 2026-07-11)
+
+Production bundles must pass stricter checks than dev bundles. Validators can reject miner-side tampering without trusting the miner's word.
+
+### Added
+
+- **`verify_pinned_generator()`** — `manifest.generator_version` must equal the validator's `GENERATOR_VERSION` (`0.3.0`). Bundles from older or forked SparkProof builds are rejected.
+
+- **`verify_production_artifacts()`** — requires the full proof directory:
+  - `manifest.json`
+  - `prompts.jsonl`
+  - `trajectories.jsonl`
+  - `trajectories_raw.jsonl`
+  - `validation_report.jsonl`
+  - `gpu_attestation.json`
+
+- **`verify_raw_to_verified_consistency()`** — ensures `trajectories.jsonl` (verified rows) is an unmodified subset of `trajectories_raw.jsonl` (pre-prove archive):
+  - `validation_report.jsonl` row count must match raw archive
+  - Every passing raw index must have a matching verified fingerprint `(prompt, response, provider, model, request_sha256, gateway, gateway_model)`
+  - No verified row may exist that doesn't correspond to a passing raw row — blocks injection or alteration after validation
+
+- **`sparkproof-verify --dev`** — skips production integrity checks (pinned generator, artifact set, raw/verified consistency) for local development.
+
+- **`production` parameter on `verify_bundle()`** — defaults to `require_gpu_attestation`; when `True`, runs all production checks.
+
+### Changed
+
+- **Yunwu gateway model pinning** — production teachers are now strictly:
+  - Anthropic: `claude-fable-5` (was `claude-sonnet-5`)
+  - OpenAI: `gpt-5.6-sol` (was `gpt-5-mini`)
+  - `YUNWU_PINNED_SLUGS` enforced at env load — misconfigured `YUNWU_MODEL_*` vars raise `ValueError` before any generation starts
+  - `YUNWU_ACCEPTED_RESPONSE_SLUGS` allows `gpt-5.6` as a response alias when gateway echoes without `-sol` suffix
+  - `normalize_upstream_model()` and `validate_gateway_trajectory()` reject non-pinned yunwu response slugs
+
+- **`sparkproof/cli/yunwu_probe.py`** — `--auto` now requires pinned production slugs (`claude-fable-5`, `gpt-5.6-sol`) to pass smoke tests before writing `.env`.
+
+- **`.env.example`** — defaults updated to `claude-fable-5` / `gpt-5.6-sol`.
+
+- **`README.md`** — gateway table updated to reflect pinned yunwu slugs.
+
+### Tests
+
+- `tests/test_yunwu_gateway.py` — added `test_yunwu_rejects_non_pinned_gateway_slug`.
+
+---
+
+## [0.3.0] — release gate & sampling (PR #15, 2026-07-11)
+
+### Fixed
+
+- **Release gate secret scan false positives** — bare `"sk-"` substring matched benign hyphenated words like `mask-based`. Replaced with shape-aware regex `\bsk-[A-Za-z0-9_\-]{16,}` plus targeted patterns for home paths and env key names.
+
+- **`held_out` split leakage** — trajectories with `split: held_out` were not blocked from publish. Now treated as a reserved split alongside `test` and `eval`.
+
+### Changed
+
+- **Stratified sampling documentation** — `max_share` cap applies per **source**, not per `(source, family)` bucket. Docstrings in `stratified_sampling.py` and `--max-bucket-share` help in `build_prompts.py` corrected to match code.
+
+### Tests
+
+- `test_release_gate_secret_scan_ignores_benign_hyphenated_words`
+- `test_release_gate_secret_scan_still_catches_real_api_keys_and_paths`
+- `test_release_gate_blocks_held_out_split`
+
+---
+
+## [0.3.0] — benchmark integrity & anti-cheat (PR #14, #12)
+
+### Added
+
+- **Reference-vs-kernel speedup metric** — `KernelBench fast_p` timing for candidate ranking; self-reported `do_bench` timings no longer influence winner selection (closes #13).
+
+### Changed
+
+- **Anti-cheat static checks expanded** — AST inspection now covers:
+  - Operation coverage (required Triton ops present in kernel body)
+  - PyTorch fallback bypass patterns
+  - Timing manipulation (CUDA stream injection, clock patching)
+  - Correct `kernel[grid](...)` launch syntax
+
+### Fixed
+
+- Candidate ranking could be gamed by inflated self-reported benchmark numbers.
+
+---
+
+## [0.3.0] — dataset flywheel (PR #10, #11)
+
+### Added
+
+- **Identity-free diverse sampling** — `run_seed` entropy scopes prompt selection; stratified round-robin across sources with per-source `max_share` cap; sampling provenance recorded in `prompts.sampling.json`.
+
+- **Novelty gate** — fingerprint-based duplicate detection within a bundle; wired into the release gate with `novelty_report.json` artifact.
+
+### Changed
+
+- Release gate now requires `novelty_report.json` and blocks rows that fail novelty or decontamination checks.
+
+---
+
+## [0.3.0] — HF publish & attestation binding (PR #6–#8)
+
+### Added
+
+- **HF proof artifact upload** — `sparkproof-publish-dataset` uploads bundle proof artifacts (`manifest.json`, `gpu_attestation.json`, `trajectories*.jsonl`, etc.) alongside dataset rows.
+
+- **Content-bound GPU attestation** — NRAS `eat_nonce` derived from `sha256(prompts_sha256 + trajectories_raw_sha256)`; binds attestation to this specific bundle's content (fixes #5).
+
+### Fixed
+
+- Proof artifacts are uploaded **before** dataset rows go public on Hugging Face, so the first snapshot already contains verifiable proof.
+
+---
+
+## [0.3.0] — validation pipeline hardening (PR #2–#4)
+
+### Fixed
+
+- Adversarial validation runs each seed in an isolated subprocess (not shared interpreter state).
+- `strip_seed_overrides` → `rewrite_seed_overrides` preserves valid Python syntax when rewriting `torch.manual_seed` calls.
+- `prove_blackwell_bundle` respects explicit `--strict-validate` / `--capture-ir` flags (no silent downgrade).
+- IR capture uses Triton's `TRITON_DUMP_DIR` instead of fragile inline execution.
+- Benchmark timing wraps `triton.testing.do_bench` to capture kernel-only timings.
+- DPO export backfills prompt context; empty-prompt pairs rejected.
+- Ancestry splitting quarantines existing `eval`/`held_out` splits in merged components.
+- Checkpoint prompt backfill and timeout misclassification from flywheel review.
+
+### Added
+
+- Test coverage for self-evolution and failure-mining at parity with mutation source.
+
+---
+
+## Validator integration (SparkDistill)
+
+These SparkProof changes are consumed by SparkDistill's dataset track:
+
+| SparkDistill module | What it checks |
+|---|---|
+| `eval/dataset_verify.py` | Required proof artifacts, release gate pass, sha256 consistency, re-runs `sparkproof-verify` in production mode |
+| `eval/registry_gate.py` | Schema validation, duplicate detection, end-to-end HF download + `dataset_verify` for registry PRs |
+| `.github/workflows/dataset_registry.yml` | Auto-verify and merge registry PRs on pass |
+
+Production verification command chain:
+
+```bash
+# Miner (Blackwell CC VM)
+sparkproof-triton-generate ... --strict-validate --benchmark
+sparkproof-verify --bundle bundles/run-001 --online
+
+# Validator (no GPU required for signature check)
+sparkproof-verify --bundle proof/ --online
+python -m eval.dataset_verify --hf-repo user/sparkproof-triton-v0 --sparkproof-root ../SparkProof
+```
+
+---
+
+## Upgrade notes
+
+### Yunwu users
+
+Update `.env` before running generation:
+
+```bash
+YUNWU_MODEL_ANTHROPIC=claude-fable-5
+YUNWU_MODEL_OPENAI=gpt-5.6-sol
+```
+
+Old slugs (`claude-sonnet-5`, `gpt-5-mini`) are rejected at startup.
+
+### Validators
+
+- Install SparkProof with core deps only (`uv sync`) — `pyjwt` is now required, not optional.
+- Run `sparkproof-verify --online` for full trustless verification including NRAS signature.
+- `OPENROUTER_API_KEY` is only needed for OpenRouter ledger cross-check (yunwu bundles skip this).
+- Bundles without `trajectories_raw.jsonl` or with `generator_version != 0.3.0` fail production verify.
+
+### GPU test runners
+
+Set `SPARKPROOF_RUN_GPU_TESTS=1` on a Blackwell runner. Triton JIT requires `Python.h` — use uv-managed CPython (`uv python install 3.12`) if system `python3-dev` is unavailable.
