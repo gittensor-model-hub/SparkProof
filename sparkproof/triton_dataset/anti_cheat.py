@@ -12,19 +12,38 @@ FORBIDDEN_LAUNCHER_CALLS = frozenset(
         "torch.bmm",
         "torch.softmax",
         "torch.log_softmax",
+        "torch.sigmoid",
+        "torch.tanh",
         "torch.nn.functional.softmax",
         "torch.nn.functional.log_softmax",
         "torch.nn.functional.layer_norm",
         "torch.nn.functional.gelu",
         "torch.nn.functional.relu",
         "torch.nn.functional.silu",
+        "torch.nn.functional.leaky_relu",
+        "torch.nn.functional.softplus",
         "F.softmax",
         "F.matmul",
         "F.layer_norm",
         "F.gelu",
         "F.relu",
+        "F.silu",
+        "F.sigmoid",
+        "F.tanh",
+        "F.leaky_relu",
+        "F.softplus",
     }
 )
+
+# A candidate that measures its own speed can also try to dodge that
+# measurement rather than fake correctness: launching work on a non-default
+# CUDA stream escapes the harness's implicit synchronization, and
+# reassigning the clock/benchmark functions the harness relies on
+# (`triton.testing.do_bench`, `torch.cuda.synchronize`/`Event`) fabricates a
+# timing number outright. See KernelBench's EVAL.md / kernel_static_checker.py
+# for the reward-hacking patterns this mirrors.
+STREAM_INJECTION_MARKERS = ("torch.cuda.stream(", "torch.cuda.Stream(", ".record_stream(")
+TIMING_PATCH_TARGETS = frozenset({"do_bench", "synchronize", "Event", "elapsed_time"})
 
 def _call_name(node: ast.Call, aliases: dict[str, str]) -> str | None:
     if isinstance(node.func, ast.Attribute):
@@ -71,6 +90,16 @@ def _launched_kernel(call: ast.Call, jit_names: set[str]) -> str | None:
     if isinstance(target, ast.Name) and target.id in jit_names:
         return target.id
     return None
+
+
+def _is_pass_only_body(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """A launcher that inherits/wraps a reference and does nothing of its own."""
+    body = [
+        node
+        for node in function.body
+        if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str))
+    ]
+    return len(body) == 1 and isinstance(body[0], ast.Pass)
 
 
 def detect_torch_fallbacks(code: str) -> list[str]:
@@ -125,7 +154,12 @@ def detect_torch_fallbacks(code: str) -> list[str]:
                 pending.append(name)
 
     for function_name in sorted(reachable):
-        for node in ast.walk(functions[function_name]):
+        function = functions[function_name]
+        if _is_pass_only_body(function):
+            issues.append(f"{function_name} body is only 'pass' (inheritance bypass)")
+        if any(isinstance(node, ast.Try) for node in ast.walk(function)):
+            issues.append(f"{function_name} contains try/except (potential fallback bypass)")
+        for node in ast.walk(function):
             if not isinstance(node, ast.Call):
                 continue
             name = _call_name(node, aliases)
@@ -135,6 +169,33 @@ def detect_torch_fallbacks(code: str) -> list[str]:
     return issues
 
 
+def detect_timing_manipulation(code: str) -> list[str]:
+    """Flag attempts to dodge trusted timing via streams or a patched clock.
+
+    The harness measures wall-clock via ``triton.testing.do_bench`` in the
+    same process as the candidate; launching on a non-default stream escapes
+    its implicit synchronization, and reassigning the clock/benchmark
+    functions it relies on fabricates the reported number outright.
+    """
+    issues: list[str] = []
+    for marker in STREAM_INJECTION_MARKERS:
+        if marker in code:
+            issues.append(f"uses non-default CUDA stream ({marker.rstrip('(')}) — can hide async work from timing")
+            break
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return issues
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", None)
+            if name in TIMING_PATCH_TARGETS:
+                issues.append(f"reassigns {name!r} (potential timing/clock monkey-patch)")
+    return issues
+
+
 def analyze_anti_cheat(code: str) -> dict[str, Any]:
-    issues = detect_torch_fallbacks(code)
+    issues = detect_torch_fallbacks(code) + detect_timing_manipulation(code)
     return {"passed": not issues, "issues": issues}

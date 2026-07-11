@@ -100,6 +100,56 @@ def test_anti_cheat_allows_torch_reference_in_top_level_test():
     assert analyze_anti_cheat(code)["passed"] is True
 
 
+@pytest.mark.parametrize(
+    "fallback_call",
+    ["torch.sigmoid(out)", "torch.tanh(out)", "F.leaky_relu(out)", "torch.nn.functional.softplus(out)"],
+)
+def test_anti_cheat_rejects_launcher_op_fallbacks_beyond_softmax(fallback_call: str):
+    code = VALID_KERNEL.replace("return out", f"return {fallback_call}")
+    issues = detect_torch_fallbacks(code)
+    assert any(fallback_call.split("(")[0] in issue for issue in issues)
+
+
+def test_anti_cheat_rejects_try_except_bypass_in_launcher():
+    code = VALID_KERNEL.replace(
+        "def launch_add(x, y):\n    n = x.numel()",
+        "def launch_add(x, y):\n    try:\n        n = x.numel()\n    except Exception:\n        return x + y",
+    )
+    issues = detect_torch_fallbacks(code)
+    assert any("try/except" in issue for issue in issues)
+
+
+def test_anti_cheat_rejects_pass_only_helper_in_launcher_call_graph():
+    # A launcher can genuinely launch the kernel while delegating a real
+    # sub-step (e.g. an epilogue correction) to a stub helper that does
+    # nothing — "no kernel grid launch detected" wouldn't catch this since
+    # a real launch did happen; the pass-only-body check is what does.
+    code = VALID_KERNEL.replace(
+        "add_kernel[grid](x, y, out, n, BLOCK=128)\n    return out",
+        "add_kernel[grid](x, y, out, n, BLOCK=128)\n    finalize(out)\n    return out",
+    )
+    code += "\n\ndef finalize(out):\n    pass\n"
+    issues = detect_torch_fallbacks(code)
+    assert any("body is only 'pass'" in issue for issue in issues)
+
+
+def test_anti_cheat_rejects_stream_injection():
+    code = VALID_KERNEL.replace(
+        "add_kernel[grid](x, y, out, n, BLOCK=128)",
+        "with torch.cuda.stream(torch.cuda.Stream()):\n        add_kernel[grid](x, y, out, n, BLOCK=128)",
+    )
+    result = analyze_anti_cheat(code)
+    assert result["passed"] is False
+    assert any("non-default CUDA stream" in issue for issue in result["issues"])
+
+
+def test_anti_cheat_rejects_do_bench_monkeypatch():
+    code = "import triton.testing\ntriton.testing.do_bench = lambda *a, **k: 0.001\n" + VALID_KERNEL
+    result = analyze_anti_cheat(code)
+    assert result["passed"] is False
+    assert any("do_bench" in issue for issue in result["issues"])
+
+
 def test_adversarial_wrapper_keeps_candidate_at_module_scope():
     wrapped = build_adversarial_wrapper(
         "torch.manual_seed(42)\nx = 1\nprint('SPARKPROOF_TRITON_PASS')"
