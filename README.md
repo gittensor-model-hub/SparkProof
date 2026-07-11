@@ -117,6 +117,29 @@ rewarded (`dataset:s/m/l`), open a text-only PR appending your HF URL and
 `trajectories_sha256` to SparkDistill's `datasets/registry.jsonl` — see
 `SparkDistill/datasets/README.md`.
 
+### Verified publish (smoke test, 2026-07-11)
+
+On a Blackwell RTX PRO 6000 CC VM, with sibling `SparkDistill/tritonbench/` present and
+`HF_TOKEN` in `.env`:
+
+```bash
+scripts/run_triton_pipeline.sh --run-id triton-cc-hf-001 --limit 2 \
+  --release-gate --publish gittensor-model-hub/sparkproof-triton-v0
+```
+
+Result: [gittensor-model-hub/sparkproof-triton-v0](https://huggingface.co/datasets/gittensor-model-hub/sparkproof-triton-v0) —
+2 unique rows (`api_tl_tensor`, `api_tl_tensor_descriptor`), release gate passed, GPU CC
+attestation present under `proof/`. SparkDistill `eval.dataset_verify` returned
+`verified=true`, `label=dataset:none` (2 rows, below the 100-row `dataset:s` threshold).
+
+**Prerequisites that blocked the first attempt:**
+
+| requirement | why |
+|---|---|
+| `SparkDistill/tritonbench/` on the VM | decontamination + release gate need the eval problem corpus (gitignored — rsync from dev) |
+| `HF_TOKEN` in `.env` | `--publish` writes to Hugging Face |
+| `YUNWU_API_KEY` or `OPENROUTER_API_KEY` | teacher generation |
+
 What a verified sample proves:
 
 - OpenRouter calls with pinned slugs + **`reasoning.effort: xhigh`** (`request_sha256` replay)

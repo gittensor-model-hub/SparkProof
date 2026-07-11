@@ -36,3 +36,16 @@ print('environment:', result.environment)
 if result.token_sha256():
     print('token_sha256:', result.token_sha256())
 "
+
+echo ""
+echo "=== TritonBench corpus (decontamination) ==="
+TB_ROOT="${SPARKDISTILL_ROOT:-$(cd .. && pwd)/SparkDistill}/tritonbench"
+PROBLEMS="$TB_ROOT/tritonbench/problems"
+if [ -d "$PROBLEMS" ]; then
+  echo "  OK: $PROBLEMS"
+else
+  echo "  MISSING: $PROBLEMS"
+  echo "  Decontamination and --release-gate require this tree (gitignored)."
+  echo "  rsync SparkDistill/tritonbench/ to the CC VM, or set SPARKPROOF_TRITONBENCH_PROBLEMS."
+  exit 1
+fi

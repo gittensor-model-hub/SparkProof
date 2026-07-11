@@ -32,7 +32,7 @@ Options:
   --prompts PATH          (default: prompts/triton-<run-id>.jsonl — built if missing)
   --bundle PATH           (default: bundles/<run-id>)
   --limit N
-  --publish REPO_ID       HF datasets repo (needs HF_TOKEN + uv sync --extra publish)
+  --publish REPO_ID       HF datasets repo (needs HF_TOKEN in .env + uv sync --extra publish)
   --release-gate          run provenance/decontamination gate before HF publish
   --sft-out PATH
   --sparkdistill PATH
