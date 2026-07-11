@@ -123,6 +123,57 @@ What a verified sample proves:
 - `gpu_attestation.json` from NVIDIA CC (NRAS)
 - `trajectories.jsonl` = verified-only; `trajectories_raw.jsonl` = all teacher outputs
 
+## Verifying proofs (no CC VM required)
+
+**Proving** a bundle requires a Blackwell CC VM — generation, Triton validation, and NRAS
+attestation all happen on the GPU node. **Verifying** a bundle does not: any CPU host
+(GitHub Actions, a laptop, this repo's `sparkproof-verify`) can re-check stored artifacts.
+
+```bash
+# Offline — hashes, policy, merkle, raw→verified consistency, attestation nonce
+uv run sparkproof-verify --bundle bundles/run-001
+
+# Online — above + NVIDIA NRAS JWT signature against NVIDIA JWKS
+uv run sparkproof-verify --bundle bundles/run-001 --online
+```
+
+SparkDistill validators run the same checks from the HF `proof/` directory via
+`python -m eval.dataset_verify --hf-repo <org>/<repo> --sparkproof-root ../SparkProof`.
+
+### What offline verify enforces
+
+For each trajectory row, production verification checks the **stored bundle** — not live
+hardware or live teacher API calls:
+
+| Check | What it proves |
+|---|---|
+| `provider` + `model` | Only `claude-fable-5` (Anthropic) and `gpt-5.6` / `gpt-5.6-sol` (OpenAI) |
+| `gateway` + `gateway_model` | Call went through **OpenRouter** or **yunwu** with pinned slugs |
+| `request_sha256` | The committed request body matches the pinned call: model slug + `reasoning.effort=xhigh` + prompt/settings |
+| `metadata.gateway_response_model` (yunwu) | Response model slug is also pinned (`claude-fable-5`, `gpt-5.6-sol`, or `gpt-5.6`) |
+| raw → verified consistency | Miner cannot swap `trajectories.jsonl` after GPU attestation / release gate |
+| `gpu_attestation` nonce | Attestation is bound to `trajectories_raw.jsonl`, not a different dataset |
+
+**Offline verify means:** the miner recorded the exact pinned teacher slugs
+(`claude-fable-5` + `gpt-5.6-sol`) via an approved gateway at `xhigh` reasoning, and did
+not tamper with the bundle after proving. It is **not** a live cryptographic proof that
+OpenAI/Anthropic actually served those models on every call — only that the committed JSON,
+request fingerprint, and attestation binding are internally consistent.
+
+### Offline vs online
+
+| Mode | Teacher model guarantee | GPU guarantee |
+|---|---|---|
+| **Offline** | Bundle claims + `request_sha256` + gateway slug metadata + tamper checks | Stored `gpu_attestation.json` fields + nonce binding |
+| **Online (`--online`)** | Same as offline | Above **plus** NVIDIA NRAS JWT signature verified against NVIDIA JWKS |
+| **Online + OpenRouter ledger** | Can re-query OpenRouter generation IDs to confirm routed model — only for `gateway=openrouter` and only with the creating API key | Same as online |
+
+For **yunwu** bundles there is currently no external teacher ledger re-check; offline trust
+rests on stored gateway metadata, `request_sha256`, and post-prove tamper detection. A
+dishonest relay could theoretically echo `gpt-5.6-sol` while serving a cheaper model;
+swapping rows to another model (e.g. `gpt-4o-mini`) is caught by policy + raw/verified
+consistency checks.
+
 ## Training-data strategy for a Triton specialist
 
 The target model must combine five capabilities: Python/PyTorch coding, Triton programming,
