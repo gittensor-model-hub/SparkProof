@@ -11,8 +11,37 @@ from sparkproof.policy import (
     allowed_teachers_manifest,
     validate_openrouter_trajectory,
 )
-from sparkproof.verify import verify_bundle
+from sparkproof.hashing import canonical_json_bytes, dataset_attestation_nonce, sha256_hex
+from sparkproof.verify import verify_bundle, verify_gpu_attestation
 from tests.conftest_helpers import TEST_GEN_CONFIG, make_trajectory
+
+
+def test_verify_gpu_attestation_accepts_matching_nonce(tmp_path: Path):
+    raw = [make_trajectory("anthropic", "claude-fable-5")]
+    (tmp_path / "trajectories_raw.jsonl").write_text(json.dumps(raw[0]) + "\n")
+    manifest = {"prompts_sha256": "prompts-hash", "gpu_profile": {}}
+    nonce = dataset_attestation_nonce("prompts-hash", sha256_hex(canonical_json_bytes(raw)))
+    (tmp_path / "gpu_attestation.json").write_text(
+        json.dumps({"passed": True, "nonce": nonce, "gpu_profile": {}})
+    )
+
+    assert verify_gpu_attestation(tmp_path, manifest) == []
+
+
+def test_verify_gpu_attestation_flags_swapped_trajectories_raw(tmp_path: Path):
+    raw = [make_trajectory("anthropic", "claude-fable-5")]
+    manifest = {"prompts_sha256": "prompts-hash", "gpu_profile": {}}
+    nonce = dataset_attestation_nonce("prompts-hash", sha256_hex(canonical_json_bytes(raw)))
+    (tmp_path / "gpu_attestation.json").write_text(
+        json.dumps({"passed": True, "nonce": nonce, "gpu_profile": {}})
+    )
+    # trajectories_raw.jsonl written AFTER attestation, with different content than
+    # what the nonce was bound to — must be flagged, not silently accepted.
+    swapped = [make_trajectory("openai", "gpt-5.6")]
+    (tmp_path / "trajectories_raw.jsonl").write_text(json.dumps(swapped[0]) + "\n")
+
+    issues = verify_gpu_attestation(tmp_path, manifest)
+    assert any("nonce" in issue for issue in issues)
 
 
 def test_verify_local_bundle_with_allow_unattested(tmp_path: Path):
