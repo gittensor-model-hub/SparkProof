@@ -10,14 +10,15 @@ from sparkproof.triton_dataset.doc_api_pages import api_page_html_url
 from sparkproof.triton_dataset.decontaminate import TritonDecontaminator, get_canonical_structure
 from sparkproof.triton_dataset.eval_problems import iter_eval_problem_prompts
 from sparkproof.triton_dataset.eval_harness import TritonBenchHarness
-from sparkproof.triton_dataset.failure_miner import mine_failure_to_tasks
+from sparkproof.triton_dataset.failure_miner import FAILURE_TEMPLATES, classify_failure, mine_failure_to_tasks, record_failure
 from sparkproof.triton_dataset.mutator import build_mutation_prompt, strip_boundary_mask
 from sparkproof.triton_dataset.multi_candidate import acceptance_score, assign_tier
 from sparkproof.triton_dataset.orchestrate import run_dataset_generation_step
 from sparkproof.triton_dataset.reference_kernels import REFERENCE_KERNELS, VECTOR_ADD_VALID
 from sparkproof.triton_dataset.release_gate import check_trajectory_row
 from sparkproof.triton_dataset.schema import PromptValidationError, validate_prompt_record
-from sparkproof.triton_dataset.self_evolve import evolve_parent
+from sparkproof.triton_dataset.self_evolve import EVOLUTION_OPS, apply_evolution, evolve_parent, evolve_verified_trajectory
+from sparkproof.triton_dataset.task_policy import FORBIDDEN_TRAINING_ORIGINS, assert_trainable_task
 
 
 def _prompt(task_id: str = "task") -> dict:
@@ -120,6 +121,95 @@ def test_self_evolution_is_reproducible_without_oracle():
     assert first
 
 
+def test_self_evolution_varies_by_parent_id():
+    op_alpha = evolve_parent(_prompt("alpha"), depth=1)[0]["evolution_ops"]
+    op_beta = evolve_parent(_prompt("beta"), depth=1)[0]["evolution_ops"]
+    assert op_alpha != op_beta
+
+
+@pytest.mark.parametrize("operation", EVOLUTION_OPS)
+def test_each_evolution_op_applies_and_stays_valid(operation: str):
+    parent = {**_prompt(), "ground_truth_code": VECTOR_ADD_VALID}
+    child = apply_evolution(parent, operation)
+    assert child is not None, operation
+    assert child["evolution_ops"] == [operation]
+    assert child["parent_id"] == parent["task_id"]
+    assert child["origin"] == "self_evolution"
+    assert child["difficulty"] == 2
+    assert_trainable_task(child)
+
+
+def test_apply_evolution_rejects_disallowed_parent():
+    eval_parent = {**_prompt(), "origin": "tritonbench", "split": "eval"}
+    assert apply_evolution(eval_parent, "bf16") is None
+
+
+def test_apply_evolution_inject_bug_requires_ground_truth():
+    parent = _prompt()
+    assert "ground_truth_code" not in parent
+    assert apply_evolution(parent, "inject_bug") is None
+
+
+def test_apply_evolution_inject_bug_strips_mask_and_sets_debugging_category():
+    parent = {**_prompt(), "ground_truth_code": VECTOR_ADD_VALID}
+    child = apply_evolution(parent, "inject_bug")
+    assert child["category"] == "debugging"
+    assert child["ground_truth_code"] == VECTOR_ADD_VALID
+    assert "mask=" not in child["prompt"] or child["prompt"].count("mask=") < VECTOR_ADD_VALID.count("mask=")
+
+
+def test_evolve_parent_depth_zero_returns_empty():
+    assert evolve_parent(_prompt(), depth=0) == []
+
+
+def test_evolve_parent_rejects_negative_depth():
+    with pytest.raises(ValueError, match="non-negative"):
+        evolve_parent(_prompt(), depth=-1)
+
+
+def test_evolve_parent_caps_at_available_ops():
+    parent = {**_prompt(), "ground_truth_code": VECTOR_ADD_VALID}
+    children = evolve_parent(parent, depth=len(EVOLUTION_OPS) + 50)
+    assert len(children) == len(EVOLUTION_OPS)
+    assert len({tuple(c["evolution_ops"]) for c in children}) == len(EVOLUTION_OPS)
+
+
+def test_evolve_parent_caps_difficulty_at_five():
+    parent = {**_prompt(), "difficulty": 5}
+    child = evolve_parent(parent, depth=1)[0]
+    assert child["difficulty"] == 5
+
+
+def test_evolve_verified_trajectory_skips_failed_validation():
+    trajectory = {
+        "prompt": "p",
+        "sparkproof_validation": {"passed": False},
+        "metadata": {"prompt_meta": _prompt()},
+    }
+    assert evolve_verified_trajectory(trajectory, depth=1) == []
+
+
+def test_evolve_verified_trajectory_builds_parent_from_prompt_meta():
+    trajectory = {
+        "prompt": "Write a Triton kernel",
+        "system": "Be correct",
+        "sparkproof_validation": {"passed": True},
+        "metadata": {
+            "prompt_meta": {
+                "task_id": "translate_relu",
+                "origin": "torch_op",
+                "split": "train",
+                "category": "translation",
+                "torch_reference": "relu",
+                "ground_truth_code": VECTOR_ADD_VALID,
+            }
+        },
+    }
+    children = evolve_verified_trajectory(trajectory, depth=1)
+    assert children
+    assert children[0]["parent_id"] == "translate_relu"
+
+
 def test_failure_mining_uses_task_family_and_distinct_variants():
     tasks = mine_failure_to_tasks(
         {
@@ -134,6 +224,119 @@ def test_failure_mining_uses_task_family_and_distinct_variants():
     assert len(tasks) == 2
     assert all("softmax" in task["prompt"] for task in tasks)
     assert tasks[0]["prompt"] != tasks[1]["prompt"]
+
+
+@pytest.mark.parametrize(
+    "validation,expected",
+    [
+        ({"passed": True}, "pass"),
+        ({"passed": False, "fail_reason": "syntax_error"}, "parse_error"),
+        ({"passed": False, "fail_reason": "triton_api"}, "wrong_api_version"),
+        (
+            {
+                "passed": False,
+                "fail_reason": "compile_execute_failed",
+                "stages": {"compile_execute": {"output_tail": "mask out of bounds"}},
+            },
+            "tail_mask_failure",
+        ),
+        (
+            {
+                "passed": False,
+                "fail_reason": "compile_execute_failed",
+                "stages": {"compile_execute": {"output_tail": "stride mismatch"}},
+            },
+            "stride_error",
+        ),
+        (
+            {
+                "passed": False,
+                "fail_reason": "compile_execute_failed",
+                "stages": {"compile_execute": {"output_tail": "dtype mismatch"}},
+            },
+            "dtype_error",
+        ),
+        (
+            {
+                "passed": False,
+                "fail_reason": "compile_execute_failed",
+                "stages": {"compile_execute": {"output_tail": "unrelated failure"}},
+            },
+            "compile_error",
+        ),
+        ({"passed": False, "fail_reason": "benchmark_below_floor"}, "performance_regression"),
+        ({"passed": False, "fail_reason": "adversarial_failed"}, "runtime_error"),
+        ({"passed": False}, "runtime_error"),
+    ],
+)
+def test_classify_failure_covers_every_reason(validation: dict, expected: str):
+    assert classify_failure(validation) == expected
+
+
+def test_record_failure_builds_expected_fields():
+    failure = record_failure(
+        run_id="run-1",
+        task={"task_id": "t1", "source": "torch_op", "category": "translation", "task_family": "relu"},
+        model="anthropic",
+        validation={"passed": False, "fail_reason": "compile_execute_failed"},
+        response="```python\nprint('broken')\n```",
+    )
+    assert failure["task_origin"] == "torch_op"
+    assert failure["split"] == "dev"
+    assert failure["failure_stage"] == "compile_execute_failed"
+    assert failure["failure_class"] == "compile_error"
+    assert failure["tags"] == ["translation", "relu"]
+    assert "broken" in failure["broken_code"]
+
+
+@pytest.mark.parametrize("origin", sorted(FORBIDDEN_TRAINING_ORIGINS))
+def test_mine_failure_to_tasks_rejects_every_forbidden_origin(origin: str):
+    failure = {"task_id": "f", "task_origin": origin, "split": "train", "failure_class": "compile_error"}
+    assert mine_failure_to_tasks(failure) == []
+
+
+def test_mine_failure_to_tasks_rejects_test_split():
+    failure = {"task_id": "f", "task_origin": "torch_op", "split": "test", "failure_class": "compile_error"}
+    assert mine_failure_to_tasks(failure) == []
+
+
+def test_mine_failure_to_tasks_falls_back_to_compile_error_template_for_unknown_class():
+    tasks = mine_failure_to_tasks(
+        {
+            "task_id": "f",
+            "task_origin": "torch_op",
+            "split": "train",
+            "failure_class": "not_a_real_class",
+            "task_family": "matmul",
+        }
+    )
+    assert tasks[0]["prompt"].startswith(FAILURE_TEMPLATES["compile_error"].format(op="matmul")[:20])
+    assert tasks[0]["parent_failure_class"] == "not_a_real_class"
+
+
+def test_mine_failure_to_tasks_falls_back_to_tags_when_task_family_missing():
+    tasks = mine_failure_to_tasks(
+        {
+            "task_id": "f",
+            "task_origin": "torch_op",
+            "split": "train",
+            "failure_class": "compile_error",
+            "tags": ["debugging", "matmul"],
+        }
+    )
+    assert "matmul" in tasks[0]["prompt"]
+
+
+def test_mine_failure_to_tasks_respects_n():
+    failure = {"task_id": "f", "task_origin": "torch_op", "split": "train", "failure_class": "compile_error", "task_family": "relu"}
+    assert len(mine_failure_to_tasks(failure, n=1)) == 1
+    assert len(mine_failure_to_tasks(failure, n=3)) == 3
+
+
+def test_mined_tasks_are_trainable():
+    failure = {"task_id": "f", "task_origin": "torch_op", "split": "train", "failure_class": "compile_error", "task_family": "relu"}
+    for task in mine_failure_to_tasks(failure):
+        assert_trainable_task(task)
 
 
 def test_candidate_scoring_and_tiers():
