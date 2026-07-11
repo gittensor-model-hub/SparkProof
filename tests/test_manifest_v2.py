@@ -72,6 +72,23 @@ def test_build_manifest_v2_merkle(tmp_path: Path):
     assert manifest["openrouter_generation_config"]["reasoning_effort"] == "xhigh"
 
 
+def test_build_manifest_v2_carries_sampling_provenance(tmp_path: Path):
+    trajectories = [_verified_traj("anthropic", "claude-fable-5", "anthropic/claude-fable-5")]
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text(json.dumps({"prompt": "x"}) + "\n")
+    sampling = {"policy": "stratified-v1", "run_seed": "abc", "catalog_sha256": "e" * 64}
+    manifest = build_manifest_v2(
+        trajectories,
+        prompts_sha256=sha256_file(str(prompts)),
+        gpu_profile={"family": "blackwell", "profile": "workstation", "name": "x", "capability": [12, 0]},
+        raw_sample_count=1,
+        benchmark_enabled=False,
+        openrouter_generation_config=TEST_GEN_CONFIG,
+        sampling=sampling,
+    ).to_dict()
+    assert manifest["sampling"] == sampling
+
+
 def test_verify_sparkproof_v2_bundle(tmp_path: Path):
     trajectories = [
         _verified_traj("anthropic", "claude-fable-5", "anthropic/claude-fable-5"),

@@ -40,3 +40,28 @@ def test_rejects_missing_openrouter_fields():
             prompts_sha256="d" * 64,
             openrouter_generation_config=TEST_GEN_CONFIG,
         )
+
+
+def test_manifest_carries_sampling_provenance_when_provided():
+    sampling = {
+        "policy": "stratified-v1",
+        "run_seed": "abc123",
+        "catalog_sha256": "d" * 64,
+        "bucket_counts": {"mutation": 5, "torch_op": 5},
+    }
+    manifest = build_manifest(
+        [make_trajectory("anthropic", "claude-fable-5")],
+        prompts_sha256="c" * 64,
+        openrouter_generation_config=TEST_GEN_CONFIG,
+        sampling=sampling,
+    ).to_dict()
+    assert manifest["sampling"] == sampling
+
+
+def test_manifest_omits_sampling_key_when_not_provided():
+    manifest = build_manifest(
+        [make_trajectory("anthropic", "claude-fable-5")],
+        prompts_sha256="c" * 64,
+        openrouter_generation_config=TEST_GEN_CONFIG,
+    ).to_dict()
+    assert "sampling" not in manifest

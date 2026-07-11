@@ -532,3 +532,47 @@ def test_enriched_prompt_build_has_unique_ids_and_split_metadata(tmp_path):
     assert count == len(records) == 66
     assert len({record["task_id"] for record in records}) == count
     assert all(record.get("split_group") for record in records)
+
+
+def test_build_prompts_file_writes_sampling_provenance_sidecar(tmp_path):
+    out = tmp_path / "prompts.jsonl"
+    build_prompts_file(out, sources=frozenset({"mutation", "torch_op"}), run_seed="fixed-seed")
+
+    sidecar = json.loads(out.with_suffix(".sampling.json").read_text(encoding="utf-8"))
+    assert sidecar["run_seed"] == "fixed-seed"
+    assert sidecar["policy"] == "stratified-v1"
+    assert len(sidecar["catalog_sha256"]) == 64
+    assert sidecar["requested_limit"] is None
+    assert sum(sidecar["bucket_counts"].values()) == 32  # 15 mutation + 17 torch_op
+
+
+def test_build_prompts_file_generates_and_persists_run_seed_when_omitted(tmp_path):
+    out = tmp_path / "prompts.jsonl"
+    build_prompts_file(out, sources=frozenset({"mutation", "torch_op"}))
+
+    sidecar = json.loads(out.with_suffix(".sampling.json").read_text(encoding="utf-8"))
+    assert sidecar["run_seed"]
+    int(sidecar["run_seed"], 16)  # a real generated hex seed, not empty/placeholder
+
+
+def test_build_prompts_file_same_run_seed_replays_byte_identical_prompts(tmp_path):
+    first_out = tmp_path / "first.jsonl"
+    second_out = tmp_path / "second.jsonl"
+    build_prompts_file(
+        first_out, sources=frozenset({"mutation", "torch_op"}), limit=10, run_seed="replay-seed"
+    )
+    build_prompts_file(
+        second_out, sources=frozenset({"mutation", "torch_op"}), limit=10, run_seed="replay-seed"
+    )
+    assert first_out.read_text(encoding="utf-8") == second_out.read_text(encoding="utf-8")
+
+
+def test_build_prompts_file_limit_is_not_a_fixed_prefix_across_seeds(tmp_path):
+    """Regression for issue #9: a small --limit must not always select the same
+    prefix (previously always the first N api_doc records in source order)."""
+    outs = []
+    for i, seed in enumerate(("seed-0", "seed-1", "seed-2")):
+        out = tmp_path / f"run{i}.jsonl"
+        build_prompts_file(out, sources=frozenset({"mutation", "torch_op"}), limit=2, run_seed=seed)
+        outs.append({json.loads(line)["task_id"] for line in out.read_text().splitlines() if line.strip()})
+    assert len({frozenset(o) for o in outs}) > 1, "different run seeds should not all select the same 2 tasks"

@@ -127,6 +127,44 @@ def test_self_evolution_varies_by_parent_id():
     assert op_alpha != op_beta
 
 
+def test_self_evolution_without_run_seed_is_stable_across_runs():
+    """No run_seed: selection depends only on parent task_id (pre-issue-#9 behavior)."""
+    first = evolve_parent(_prompt(), depth=1)[0]["evolution_ops"]
+    second = evolve_parent(_prompt(), depth=1)[0]["evolution_ops"]
+    assert first == second
+
+
+def test_self_evolution_run_seed_is_reproducible_for_the_same_seed():
+    first = evolve_parent(_prompt(), depth=1, run_seed="seed-a")[0]["evolution_ops"]
+    second = evolve_parent(_prompt(), depth=1, run_seed="seed-a")[0]["evolution_ops"]
+    assert first == second
+
+
+def test_self_evolution_different_run_seeds_can_explore_different_children():
+    parent = {**_prompt(), "ground_truth_code": VECTOR_ADD_VALID}
+    picks = {evolve_parent(parent, depth=1, run_seed=f"seed-{i}")[0]["evolution_ops"][0] for i in range(10)}
+    assert len(picks) > 1, "10 different run seeds should not all pick the identical op"
+
+
+def test_evolve_verified_trajectory_threads_run_seed_reproducibly():
+    trajectory = {
+        "prompt": "Write a Triton kernel",
+        "sparkproof_validation": {"passed": True},
+        "metadata": {
+            "prompt_meta": {
+                "task_id": "translate_relu",
+                "origin": "torch_op",
+                "split": "train",
+                "category": "translation",
+                "ground_truth_code": VECTOR_ADD_VALID,
+            }
+        },
+    }
+    first = evolve_verified_trajectory(trajectory, depth=1, run_seed="seed-x")
+    second = evolve_verified_trajectory(trajectory, depth=1, run_seed="seed-x")
+    assert [c["evolution_ops"] for c in first] == [c["evolution_ops"] for c in second]
+
+
 @pytest.mark.parametrize("operation", EVOLUTION_OPS)
 def test_each_evolution_op_applies_and_stays_valid(operation: str):
     parent = {**_prompt(), "ground_truth_code": VECTOR_ADD_VALID}
@@ -378,7 +416,7 @@ def test_orchestration_runs_base_and_children_and_returns_raw_trajectories(monke
     child = {**_prompt("child"), "parent_id": "task"}
     monkeypatch.setattr(
         "sparkproof.triton_dataset.orchestrate.evolve_parent",
-        lambda task, depth: [child],
+        lambda task, depth, run_seed=None: [child],
     )
 
     def fake_generate(task, **kwargs):

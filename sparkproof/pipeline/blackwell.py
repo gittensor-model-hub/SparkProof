@@ -136,6 +136,7 @@ def prove_blackwell_bundle(
         openrouter_generation_config=gen_config,
         gateway=prior_manifest.get("gateway"),
         attestation_hash=attestation_hash,
+        sampling=prior_manifest.get("sampling"),
     ).to_dict()
 
     _write_jsonl(bundle_dir / "validation_report.jsonl", validation_reports)

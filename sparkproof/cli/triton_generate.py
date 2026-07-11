@@ -19,6 +19,7 @@ from sparkproof.triton_dataset.dpo_export import enrich_adjudication_with_respon
 from sparkproof.triton_dataset.failure_miner import mine_failure_to_tasks, record_failure
 from sparkproof.triton_dataset.multi_candidate import generate_best_of_n
 from sparkproof.triton_dataset.orchestrate import run_dataset_generation_step
+from sparkproof.triton_dataset.run_seed import generate_run_seed
 from sparkproof.triton_dataset.self_evolve import evolve_verified_trajectory
 from sparkproof.triton_dataset.prompt_filters import parse_filter_set
 from sparkproof.triton_dataset.task_policy import assert_trainable_task
@@ -113,6 +114,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--orchestrate", action="store_true", help="evolve tasks + mine failures per prompt")
     parser.add_argument("--evolve-depth", type=int, default=1)
+    parser.add_argument(
+        "--run-seed",
+        default=None,
+        help="hex entropy scoping self-evolution op selection to this run (identity-free; "
+        "auto-generated and printed if omitted, not required to match the seed used at "
+        "build-prompts time)",
+    )
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--resume", action="store_true", help="resume from generation checkpoints in --out")
     args = parser.parse_args(argv)
@@ -124,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--export-dpo requires --benchmark")
 
     _load_env()
+    run_seed = args.run_seed or generate_run_seed()
+    if not args.run_seed:
+        print(f"generated run seed (persist to replay this run): {run_seed}", file=sys.stderr)
     gateway = args.gateway or default_gateway()
     api_key = resolve_api_key(gateway)
     providers = args.providers or ["anthropic", "openai"]
@@ -191,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
                 evolve_depth=args.evolve_depth,
                 run_id=run_id,
                 run_benchmark=args.benchmark,
+                run_seed=run_seed,
                 debug_split=args.out / "failure_records.jsonl",
                 mined_split=args.out / "mined_tasks.jsonl",
             )
@@ -237,7 +249,9 @@ def main(argv: list[str] | None = None) -> int:
             trajectories.append(winner.record)
             _append_jsonl(trajectory_checkpoint, winner.record)
             if args.evolve_depth > 0:
-                evolved_tasks.extend(evolve_verified_trajectory(winner.record, depth=args.evolve_depth))
+                evolved_tasks.extend(
+                    evolve_verified_trajectory(winner.record, depth=args.evolve_depth, run_seed=run_seed)
+                )
         else:
             failed = next((c for c in reversed(all_candidates)), None)
             if failed is not None:
@@ -267,11 +281,17 @@ def main(argv: list[str] | None = None) -> int:
         "multi_candidate": True,
         "max_repairs": args.max_repairs,
     }
+    sampling_report_path = args.prompts.with_suffix(".sampling.json")
+    sampling_provenance = None
+    if sampling_report_path.is_file():
+        sampling_provenance = json.loads(sampling_report_path.read_text(encoding="utf-8"))
+        sampling_provenance["generation_run_seed"] = run_seed
     manifest = build_manifest(
         trajectories,
         prompts_sha256=sha256_file(str(args.prompts)),
         openrouter_generation_config=gen_config,
         gateway=gateway,
+        sampling=sampling_provenance,
     ).to_dict()
 
     write_bundle(

@@ -7,6 +7,7 @@ import hashlib
 import random
 from typing import Any
 
+from sparkproof.triton_dataset.run_seed import evolution_seed
 from sparkproof.triton_dataset.task_policy import is_evolution_parent_allowed, normalize_train_task
 
 EVOLUTION_OPS = (
@@ -76,12 +77,28 @@ def apply_evolution(parent: dict[str, Any], operation: str) -> dict[str, Any] | 
     return normalize_train_task(child)
 
 
-def evolve_parent(parent: dict[str, Any], *, depth: int = 1, rng: random.Random | None = None) -> list[dict[str, Any]]:
-    """Apply up to `depth` distinct evolution ops (deterministic sampling)."""
+def evolve_parent(
+    parent: dict[str, Any],
+    *,
+    depth: int = 1,
+    rng: random.Random | None = None,
+    run_seed: str | None = None,
+) -> list[dict[str, Any]]:
+    """Apply up to `depth` distinct evolution ops (deterministic sampling).
+
+    Without `run_seed`, op selection is stable per parent task_id alone (every
+    run picks the same children of a given parent). With `run_seed`, selection
+    is scoped to `H(run_seed || parent_task_id || depth)` — different run seeds
+    can explore different children of the same parent, while any individual
+    run remains exactly reproducible from its own seed.
+    """
     if depth < 0:
         raise ValueError("depth must be non-negative")
     parent_id = str(parent.get("task_id", "parent"))
-    stable_seed = int(hashlib.sha256(parent_id.encode()).hexdigest(), 16)
+    if run_seed:
+        stable_seed = evolution_seed(run_seed, parent_id, depth)
+    else:
+        stable_seed = int(hashlib.sha256(parent_id.encode()).hexdigest(), 16)
     r = rng or random.Random(stable_seed)
     ops = r.sample(list(EVOLUTION_OPS), k=min(depth, len(EVOLUTION_OPS)))
     children: list[dict[str, Any]] = []
@@ -92,7 +109,9 @@ def evolve_parent(parent: dict[str, Any], *, depth: int = 1, rng: random.Random 
     return children
 
 
-def evolve_verified_trajectory(trajectory: dict[str, Any], *, depth: int = 1) -> list[dict[str, Any]]:
+def evolve_verified_trajectory(
+    trajectory: dict[str, Any], *, depth: int = 1, run_seed: str | None = None
+) -> list[dict[str, Any]]:
     """Build evolution parents from a passing trajectory row."""
     validation = trajectory.get("sparkproof_validation") or {}
     if validation and not validation.get("passed"):
@@ -111,4 +130,4 @@ def evolve_verified_trajectory(trajectory: dict[str, Any], *, depth: int = 1) ->
         "reference_expr": meta.get("torch_reference"),
         "task_family": meta.get("category"),
     }
-    return evolve_parent(parent, depth=depth)
+    return evolve_parent(parent, depth=depth, run_seed=run_seed)

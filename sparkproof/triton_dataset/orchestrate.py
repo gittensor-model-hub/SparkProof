@@ -28,6 +28,7 @@ def run_dataset_generation_step(
     evolve_depth: int = 1,
     run_id: str = "orchestrate",
     run_benchmark: bool = False,
+    run_seed: str | None = None,
     debug_split: Path | None = None,
     mined_split: Path | None = None,
 ) -> dict[str, Any]:
@@ -37,7 +38,7 @@ def run_dataset_generation_step(
 
     evolved_tasks = [task]
     if evolve_depth:
-        evolved_tasks.extend(evolve_parent(task, depth=evolve_depth))
+        evolved_tasks.extend(evolve_parent(task, depth=evolve_depth, run_seed=run_seed))
 
     results: list[dict[str, Any]] = []
     for evolved in evolved_tasks:
