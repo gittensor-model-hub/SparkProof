@@ -343,7 +343,7 @@ teacher calls, published Hugging Face bundles, registry submissions, licensing d
 or downstream use by miners, evaluators, or third parties. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full legal gate.
 
-built by :Love
+built with ❤️
 
 ## License
 
