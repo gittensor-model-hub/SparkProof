@@ -1994,6 +1994,7 @@ dependencies = [
 
 [package.optional-dependencies]
 blackwell = [
+    { name = "numpy" },
     { name = "torch" },
     { name = "triton" },
 ]
@@ -2015,6 +2016,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=43.0.0" },
     { name = "datasets", marker = "extra == 'publish'", specifier = ">=3.0.0" },
     { name = "huggingface-hub", marker = "extra == 'publish'", specifier = ">=0.26.0" },
+    { name = "numpy", marker = "extra == 'blackwell'", specifier = ">=2.0.0" },
     { name = "nv-attestation-sdk", marker = "extra == 'gpu'", specifier = "==2.7.3" },
     { name = "pyjwt", marker = "extra == 'gpu'", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.0" },

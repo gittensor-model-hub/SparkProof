@@ -34,6 +34,12 @@ def main(argv: list[str] | None = None) -> int:
         help="optional held-out benchmark Python tree for structural fingerprints",
     )
     parser.add_argument("--dataset-version", default="triton-distill-v0.2")
+    parser.add_argument(
+        "--registry-snapshot",
+        type=Path,
+        default=None,
+        help="optional JSONL of previously-accepted rows to check novelty against",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -43,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
                 dataset_version=args.dataset_version,
                 problems_dir=args.problems_dir,
                 benchmark_py_dir=args.benchmark_py_dir,
+                registry_snapshot_path=args.registry_snapshot,
             )
 
         url = publish_bundle_to_hf(bundle_dir=args.bundle, repo_id=args.repo_id, private=args.private)

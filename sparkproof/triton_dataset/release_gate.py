@@ -8,11 +8,35 @@ from pathlib import Path
 from typing import Any
 
 from sparkproof.triton_dataset.decontaminate import TritonDecontaminator, extract_python_from_response
+from sparkproof.triton_dataset.novelty import NoveltyRegistry, compute_novelty_report
 from sparkproof.triton_dataset.task_policy import FORBIDDEN_TRAINING_ORIGINS
 
 
 def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    with path.open() as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    return records
+
+
+def _load_registry_snapshot(path: Path | None) -> NoveltyRegistry:
+    """Load a pinned accepted-fingerprint snapshot. Empty (no prior art) if none given.
+
+    Comparing against the full cross-run accepted registry is the validator's
+    job (SparkDistill owns that snapshot); this only lets a caller feed one in
+    locally. Without it, novelty accounting still catches duplicates *within*
+    this bundle via `compute_novelty_report`'s intra-bundle growth.
+    """
+    if path is None:
+        return NoveltyRegistry()
+    return NoveltyRegistry.from_rows(_load_jsonl(path))
 
 
 def check_trajectory_row(traj: dict[str, Any], decon: TritonDecontaminator) -> list[str]:
@@ -77,6 +101,7 @@ def run_release_gate(
     dataset_version: str = "triton-distill-v0.2",
     problems_dir: Path | None = None,
     benchmark_py_dir: Path | None = None,
+    registry_snapshot_path: Path | None = None,
 ) -> dict[str, Any]:
     from sparkproof.publish.hf_dataset import load_trajectories_jsonl
     from sparkproof.verify import verify_bundle
@@ -97,14 +122,24 @@ def run_release_gate(
         require_eval_corpus=True,
     )
     blocked: list[dict[str, Any]] = []
+    blocked_indices: set[int] = set()
     for i, traj in enumerate(trajectories):
         issues = check_trajectory_row(traj, decon)
         if issues:
             blocked.append({"index": i, "task_id": (traj.get("metadata") or {}).get("prompt_meta", {}).get("task_id"), "issues": issues})
+            blocked_indices.add(i)
+
+    verified_rows = [traj for i, traj in enumerate(trajectories) if i not in blocked_indices]
+    registry = _load_registry_snapshot(registry_snapshot_path)
+    novelty_report = compute_novelty_report(verified_rows, registry).to_dict()
+    (bundle_dir / "novelty_report.json").write_text(json.dumps(novelty_report, indent=2))
 
     manifest = build_manifest(trajectories=trajectories, dataset_version=dataset_version, bundle_dir=bundle_dir)
     manifest["blocked_rows"] = len(blocked)
     manifest["passed"] = len(blocked) == 0
+    # Duplicates don't fail the gate — decontamination blocks eval leakage, novelty
+    # only feeds reward accounting (novel_verified_rows), per issue #9's design.
+    manifest["novelty"] = novelty_report
 
     manifest_path = bundle_dir / "dataset_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
