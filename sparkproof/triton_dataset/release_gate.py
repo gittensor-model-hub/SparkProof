@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -39,14 +40,24 @@ def _load_registry_snapshot(path: Path | None) -> NoveltyRegistry:
     return NoveltyRegistry.from_rows(_load_jsonl(path))
 
 
+# API-key shapes, not bare substrings: a plain "sk-" needle also matches benign
+# hyphenated prose like "mask-based" or "task-level" and would block legit rows.
+_SECRET_PATTERNS = (
+    ("sk- API key", re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}")),
+    ("home directory path", re.compile(r"/home/\w+")),
+    ("YUNWU_API_KEY", re.compile(r"YUNWU_API_KEY")),
+    ("OPENROUTER_API_KEY", re.compile(r"OPENROUTER_API_KEY")),
+)
+
+
 def check_trajectory_row(traj: dict[str, Any], decon: TritonDecontaminator) -> list[str]:
     issues: list[str] = []
     meta = (traj.get("metadata") or {}).get("prompt_meta") or {}
     origin = meta.get("origin") or meta.get("source")
     if origin in FORBIDDEN_TRAINING_ORIGINS:
         issues.append(f"benchmark origin {origin!r}")
-    if meta.get("split") in {"test", "eval"}:
-        issues.append("eval split")
+    if meta.get("split") in {"test", "eval", "held_out"}:
+        issues.append(f"reserved split {meta.get('split')!r}")
     issues.extend(decon.check_task(meta))
     validation = traj.get("sparkproof_validation") or {}
     if validation.get("passed") is not True:
@@ -55,9 +66,9 @@ def check_trajectory_row(traj: dict[str, Any], decon: TritonDecontaminator) -> l
     if decon.is_contaminated_code(code):
         issues.append("code structure matches eval benchmark")
     blob = json.dumps(traj)
-    for needle in ("sk-", "/home/", "YUNWU_API_KEY", "OPENROUTER_API_KEY"):
-        if needle in blob:
-            issues.append(f"suspicious content: {needle}")
+    for label, pattern in _SECRET_PATTERNS:
+        if pattern.search(blob):
+            issues.append(f"suspicious content: {label}")
     return issues
 
 

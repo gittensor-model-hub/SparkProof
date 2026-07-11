@@ -80,8 +80,8 @@ def main(argv: list[str] | None = None) -> int:
         "--max-bucket-share",
         type=float,
         default=0.25,
-        help="max share of --limit a single (source, family) bucket may claim, "
-        "while other buckets still have supply (default: 0.25)",
+        help="max share of --limit a single source may claim while other "
+        "sources still have supply (default: 0.25)",
     )
     parser.add_argument("--gpu", type=int, default=0, help="GPU index for mutation error capture")
     parser.add_argument("--mined-prompts", type=Path, default=None, help="failure-mined tasks jsonl")
