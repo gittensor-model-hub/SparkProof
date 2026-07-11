@@ -28,8 +28,12 @@ OPENROUTER_MODEL_ANTHROPIC = "anthropic/claude-fable-5"
 OPENROUTER_MODEL_OPENAI = "openai/gpt-5.6-sol"
 
 # yunwu docs: https://yunwu.apifox.cn/ — native slugs from 支持模型 (/v1/models).
-YUNWU_DEFAULT_ANTHROPIC = "claude-sonnet-5"
-YUNWU_DEFAULT_OPENAI = "gpt-5-mini"
+# Production pins the same logical teachers as OpenRouter (Fable 5 + GPT 5.6 Sol).
+YUNWU_DEFAULT_ANTHROPIC = "claude-fable-5"
+YUNWU_DEFAULT_OPENAI = "gpt-5.6-sol"
+YUNWU_PINNED_SLUGS = frozenset({YUNWU_DEFAULT_ANTHROPIC, YUNWU_DEFAULT_OPENAI})
+# yunwu may echo a provider alias without the -sol suffix on responses.
+YUNWU_ACCEPTED_RESPONSE_SLUGS = YUNWU_PINNED_SLUGS | frozenset({"gpt-5.6"})
 
 
 def yunwu_api_base() -> str:
@@ -44,12 +48,22 @@ def yunwu_models_url() -> str:
     return f"{yunwu_api_base()}/models"
 
 
+def _pinned_yunwu_slug(env_key: str, default: str) -> str:
+    value = os.environ.get(env_key, default).strip()
+    if value not in YUNWU_PINNED_SLUGS:
+        raise ValueError(
+            f"{env_key} must be one of {sorted(YUNWU_PINNED_SLUGS)!r} "
+            f"(production teachers only), got {value!r}"
+        )
+    return value
+
+
 def yunwu_model_anthropic() -> str:
-    return os.environ.get("YUNWU_MODEL_ANTHROPIC", YUNWU_DEFAULT_ANTHROPIC).strip()
+    return _pinned_yunwu_slug("YUNWU_MODEL_ANTHROPIC", YUNWU_DEFAULT_ANTHROPIC)
 
 
 def yunwu_model_openai() -> str:
-    return os.environ.get("YUNWU_MODEL_OPENAI", YUNWU_DEFAULT_OPENAI).strip()
+    return _pinned_yunwu_slug("YUNWU_MODEL_OPENAI", YUNWU_DEFAULT_OPENAI)
 
 
 # Back-compat module constants (call lazy helpers when building policy).

@@ -18,9 +18,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="accept sparkproof-2 without gpu_attestation.json (dev only)",
     )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="skip production integrity checks (pinned generator, raw/verified consistency)",
+    )
     args = parser.parse_args(argv)
 
-    report = verify_bundle(args.bundle, require_gpu_attestation=not args.allow_no_gpu_attest)
+    report = verify_bundle(
+        args.bundle,
+        require_gpu_attestation=not args.allow_no_gpu_attest,
+        production=not args.dev,
+    )
     print(json.dumps(report, indent=2))
     if report["verified"]:
         print("VERIFIED", file=sys.stderr)
