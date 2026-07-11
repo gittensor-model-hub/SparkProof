@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from sparkproof.triton_dataset.reference_bench import DEFAULT_BENCHMARK_SIZES
+
 TORCH_OPS = [
     {
         "name": "LayerNorm",
@@ -119,7 +121,14 @@ ADVERSARIAL_SHAPE_PRESETS = [
 ]
 
 
+def _benchmark_size_hint(shapes: dict[str, str]) -> str:
+    dims = sorted({name for shape_expr in shapes.values() for name in shape_expr.strip("()").replace(",", " ").split()})
+    sizes = {dim: DEFAULT_BENCHMARK_SIZES[dim] for dim in dims if dim in DEFAULT_BENCHMARK_SIZES}
+    return ", ".join(f"{key}={value}" for key, value in sizes.items())
+
+
 def build_torch_translation_prompt(op: dict, *, shape_preset: dict[str, int] | None = None) -> dict:
+    benchmark_sizes = _benchmark_size_hint(op["shapes"])
     prompt = f"""Write a Triton 3.7.1 kernel replicating this PyTorch operation on Blackwell SM12x:
 
 Operation: `{op['code']}`
@@ -133,8 +142,13 @@ Requirements:
 5. Instantiate symbolic dimensions with concrete adversarial sizes; use a non-power-of-two tail such as 1003
 6. Test float32 and float16 inputs (and state justified tolerances)
 7. Print SPARKPROOF_TRITON_PASS after successful test
-8. Invoke triton.testing.do_bench(lambda: launcher(...)); SparkProof records
-   the returned timing independently"""
+8. Invoke triton.testing.do_bench(lambda: launcher(...)) on your correctness-test
+   inputs; SparkProof records the returned timing independently
+9. Additionally invoke triton.testing.do_bench once more with float32 inputs at
+   these larger sizes:
+   {benchmark_sizes}
+   This last timing is diagnostic only. Candidate-controlled benchmark calls are
+   not eligible for speed ranking or KernelBench fast_p credit."""
     if shape_preset:
         shape_hint = ", ".join(f"{key}={value}" for key, value in sorted(shape_preset.items()))
         prompt += f"\n\nUse these concrete dimensions in your self-test: {shape_hint}"
@@ -152,6 +166,7 @@ Requirements:
         "prompt": prompt,
         "torch_reference": op["code"],
         "reference_expr": op["code"],
+        "shapes": op["shapes"],
     }
 
 

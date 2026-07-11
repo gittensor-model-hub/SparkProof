@@ -20,7 +20,7 @@ from sparkproof.triton_dataset.dataset_split import assign_splits, split_group_k
 from sparkproof.triton_dataset.dpo_export import enrich_adjudication_with_responses, export_dpo_jsonl
 from sparkproof.triton_dataset.error_capture import capture_execution_error
 from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
-from sparkproof.triton_dataset.multi_candidate import _client_value, generate_best_of_n
+from sparkproof.triton_dataset.multi_candidate import _client_value, acceptance_score, generate_best_of_n
 from sparkproof.triton_dataset.python_runner import PythonExecution
 from sparkproof.triton_dataset.prompt_templates import apply_prompt_template, wrap_prompt
 from sparkproof.triton_dataset.torch_ops import iter_torch_translation_prompts
@@ -379,12 +379,13 @@ def test_dataset_split_quarantines_entire_eval_component():
 
 
 def test_benchmark_parses_kernel_timing_marker():
-    result = TritonKernelValidator._benchmark_score(
+    result = TritonKernelValidator(gpu_index=0)._benchmark_score(
         "@triton.jit\ndef kernel():\n    pass\ngrid = (1,)",
         "SPARKPROOF_TRITON_PASS\nSPARKPROOF_TRUSTED_TIMING_MS: 0.125\n",
     )
     assert result["timing_ms"] == pytest.approx(0.125)
     assert result["timing_method"] == "monitored_triton_do_bench"
+    assert "speedup" not in result
 
 
 def test_benchmark_wrapper_monitors_real_do_bench_calls(monkeypatch):
@@ -411,6 +412,116 @@ def test_benchmark_wrapper_monitors_real_do_bench_calls(monkeypatch):
     assert "_sparkproof_original_do_bench" in captured["source"]
     assert "SPARKPROOF_TRUSTED_TIMING_MS: 0.25" in output
     assert "0.001" not in output
+
+
+def test_benchmark_wrapper_strips_forged_last_timing_marker(monkeypatch):
+    def fake_run(source, **kwargs):
+        return PythonExecution(
+            returncode=0,
+            stdout=(
+                "SPARKPROOF_TRITON_PASS\n"
+                "SPARKPROOF_LAST_TIMING_MS: 0.000001\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("sparkproof.triton.validator.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton.validator.run_python_source", fake_run)
+
+    validator = TritonKernelValidator()
+    passed, output = validator.compile_and_execute(VALID_KERNEL, monitor_benchmark=True)
+    assert passed is True
+    assert "SPARKPROOF_LAST_TIMING_MS" not in output
+    benchmark = validator._benchmark_score(
+        VALID_KERNEL,
+        output,
+        {"torch_reference": "torch.sigmoid(x)", "shapes": {"x": "(M, N)"}},
+    )
+    assert "candidate_reported_timing_ms" not in benchmark
+    assert "self_reported_speedup" not in benchmark
+
+
+def test_validate_response_records_untrusted_speedup_diagnostic(monkeypatch):
+    def fake_candidate_run(source, **kwargs):
+        nonce = re.search(r"SPARKPROOF_MONITORED_TIMING_([0-9a-f]+)", source).group(1)
+        return PythonExecution(
+            returncode=0,
+            stdout=(
+                "SPARKPROOF_TRITON_PASS\n"
+                f"SPARKPROOF_LAST_TIMING_{nonce}: 0.5\n"
+                f"SPARKPROOF_MONITORED_TIMING_{nonce}: 0.5\n"
+            ),
+            stderr="",
+        )
+
+    def fake_reference_run(source, **kwargs):
+        return PythonExecution(
+            returncode=0,
+            stdout="SPARKPROOF_REFERENCE_TIMING_MS: 1.0\nSPARKPROOF_REFERENCE_PASS\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("sparkproof.triton.validator.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton.validator.run_python_source", fake_candidate_run)
+    monkeypatch.setattr("sparkproof.triton_dataset.reference_bench.run_python_source", fake_reference_run)
+
+    validator = TritonKernelValidator()
+    result = validator.validate_response(
+        VALID_KERNEL,
+        run_benchmark=True,
+        prompt_meta={"torch_reference": "torch.sigmoid(x)", "shapes": {"x": "(M, N)"}},
+    )
+    benchmark = result["benchmark"]
+    assert benchmark["reference_timing_ms"] == pytest.approx(1.0)
+    assert benchmark["candidate_reported_timing_ms"] == pytest.approx(0.5)
+    assert benchmark["self_reported_speedup"] == pytest.approx(2.0)
+    assert benchmark["speedup_eligible"] is False
+    assert "normalized_speedup" not in benchmark
+    assert "fast_1" not in benchmark
+    assert "fast_2" not in benchmark
+    # Even an implausibly favorable self-report cannot change winner ranking.
+    baseline = {"passed": True, "benchmark": {"composite_score": benchmark["composite_score"]}}
+    assert acceptance_score(result) == acceptance_score(baseline)
+
+
+def test_validate_response_omits_speedup_without_a_derivable_reference(monkeypatch):
+    def fake_run(source, **kwargs):
+        nonce = re.search(r"SPARKPROOF_MONITORED_TIMING_([0-9a-f]+)", source).group(1)
+        return PythonExecution(
+            returncode=0,
+            stdout=f"SPARKPROOF_TRITON_PASS\nSPARKPROOF_MONITORED_TIMING_{nonce}: 0.5\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("sparkproof.triton.validator.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton.validator.run_python_source", fake_run)
+
+    validator = TritonKernelValidator()
+    # mutation-sourced tasks carry a Triton "ground truth", not a torch reference.
+    result = validator.validate_response(
+        VALID_KERNEL, run_benchmark=True, prompt_meta={"ground_truth_code": VALID_KERNEL}
+    )
+    assert "speedup" not in result["benchmark"]
+    assert "normalized_speedup" not in result["benchmark"]
+    assert "self_reported_speedup" not in result["benchmark"]
+
+
+def test_anti_cheat_do_bench_monkeypatch_never_reaches_the_benchmark_stage():
+    # A candidate that fabricates its own timing by patching do_bench should
+    # be rejected by anti_cheat before compile_and_execute (and therefore
+    # before any reference comparison) ever runs -- it must not be able to
+    # turn a fabricated timing into a ranking signal.
+    cheating = "import triton.testing\ntriton.testing.do_bench = lambda *a, **k: 0.0001\n" + VALID_KERNEL
+    validator = TritonKernelValidator()
+    result = validator.validate_response(
+        cheating,
+        run_benchmark=True,
+        strict=True,
+        prompt_meta={"torch_reference": "torch.sigmoid(x)", "shapes": {"x": "(M, N)"}},
+    )
+    assert result["passed"] is False
+    assert result["fail_reason"] == "anti_cheat_failed"
+    assert "benchmark" not in result
 
 
 def test_ir_capture_uses_triton_dump_directory(monkeypatch):
@@ -497,7 +608,7 @@ def test_proving_gate_reapplies_strict_validation(monkeypatch):
         attest_gpu=False,
     )
     assert len(verified) == 1
-    assert calls == [{"run_benchmark": False, "strict": True, "capture_ir": True}]
+    assert calls == [{"run_benchmark": False, "strict": True, "capture_ir": True, "prompt_meta": None}]
     assert verified[0]["sparkproof_validation"]["stages"]["anti_cheat"]["passed"] is True
 
 
@@ -533,7 +644,7 @@ def test_proving_gate_does_not_downgrade_existing_strict_evidence(monkeypatch):
         prompts_sha256="abc",
         attest_gpu=False,
     )
-    assert calls == [{"run_benchmark": False, "strict": True, "capture_ir": True}]
+    assert calls == [{"run_benchmark": False, "strict": True, "capture_ir": True, "prompt_meta": None}]
 
 
 def test_prompt_templates_add_sections():

@@ -39,6 +39,9 @@ def acceptance_score(validation: dict[str, Any], *, output_tokens: int = 0) -> f
     if validation.get("passed") and not bench:
         correctness = 1.0
     compile_pass = 1.0 if validation.get("passed") or validation.get("fail_reason") != "syntax_error" else 0.0
+    # Only a harness-controlled metric may populate normalized_speedup.
+    # Candidate-controlled/self-reported timing diagnostics are intentionally
+    # ignored here.
     speed = float(bench.get("normalized_speedup", 0.0)) if bench else 0.0
     return 100.0 * correctness + 10.0 * compile_pass + 5.0 * speed - 0.01 * output_tokens
 
@@ -120,6 +123,7 @@ def generate_with_repair(
             run_benchmark=run_benchmark,
             strict=strict_validate,
             capture_ir=capture_ir,
+            prompt_meta=prompt_meta,
         )
         last_record, last_validation = record, validation
         if validation["passed"]:

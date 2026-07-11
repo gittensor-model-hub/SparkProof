@@ -12,9 +12,11 @@ from sparkproof.triton_dataset.adversarial_harness import run_adversarial_execut
 from sparkproof.triton_dataset.anti_cheat import analyze_anti_cheat
 from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
 from sparkproof.triton_dataset.python_runner import run_python_source
+from sparkproof.triton_dataset.reference_bench import benchmark_reference
 
 PASS_MARKER = "SPARKPROOF_TRITON_PASS"
 TIMING_MARKER_RE = re.compile(r"SPARKPROOF_TRUSTED_TIMING_MS\s*[:=]\s*(\d+(?:\.\d+)?)")
+LAST_TIMING_MARKER_RE = re.compile(r"SPARKPROOF_LAST_TIMING_MS\s*[:=]\s*(\d+(?:\.\d+)?)")
 TRITON_VERSION = "3.7.1"
 
 
@@ -86,6 +88,7 @@ triton.testing.do_bench = _sparkproof_monitored_do_bench
 """
             benchmark_report = f"""
     if _sparkproof_timings:
+        print(f"SPARKPROOF_LAST_TIMING_{timing_nonce}: {{_sparkproof_timings[-1]}}")
         _sparkproof_timings.sort()
         _sparkproof_median = _sparkproof_timings[len(_sparkproof_timings) // 2]
         print(f"SPARKPROOF_MONITORED_TIMING_{timing_nonce}: {{_sparkproof_median}}")
@@ -115,7 +118,11 @@ except Exception as e:
             timeout=timeout,
             env_overrides={"TRITON_PRINT_AUTOTUNING": "0"},
         )
-        output = TIMING_MARKER_RE.sub("", execution.output)
+        # Candidate stdout is untrusted. Remove both public marker forms before
+        # appending values recovered from nonce-bound wrapper markers below.
+        # Otherwise a candidate can print a forged generic marker without ever
+        # calling do_bench.
+        output = LAST_TIMING_MARKER_RE.sub("", TIMING_MARKER_RE.sub("", execution.output))
         if monitor_benchmark:
             monitored_pattern = re.compile(
                 rf"SPARKPROOF_MONITORED_TIMING_{timing_nonce}\s*:\s*(\d+(?:\.\d+)?)"
@@ -123,6 +130,10 @@ except Exception as e:
             monitored = monitored_pattern.findall(execution.output)
             if monitored:
                 output += f"\nSPARKPROOF_TRUSTED_TIMING_MS: {monitored[-1]}\n"
+            last_pattern = re.compile(rf"SPARKPROOF_LAST_TIMING_{timing_nonce}\s*:\s*(\d+(?:\.\d+)?)")
+            last = last_pattern.findall(execution.output)
+            if last:
+                output += f"\nSPARKPROOF_LAST_TIMING_MS: {last[-1]}\n"
         return (
             execution.returncode == 0 and PASS_MARKER in execution.stdout,
             output,
@@ -135,6 +146,7 @@ except Exception as e:
         run_benchmark: bool = False,
         strict: bool = False,
         capture_ir: bool = False,
+        prompt_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         code = self.extract_code(response)
         stages: dict[str, Any] = {}
@@ -171,7 +183,7 @@ except Exception as e:
 
         benchmark: dict[str, Any] | None = None
         if run_benchmark:
-            benchmark = self._benchmark_score(code, exec_output)
+            benchmark = self._benchmark_score(code, exec_output, prompt_meta)
             stages["benchmark"] = benchmark
             if benchmark["composite_score"] < 0.25:
                 return self._result(False, code, stages, "benchmark_below_floor")
@@ -203,9 +215,17 @@ except Exception as e:
             out["benchmark"] = benchmark
         return out
 
-    @staticmethod
-    def _benchmark_score(code: str, exec_output: str) -> dict[str, Any]:
-        """Score structure and consume an in-process ``triton.testing.do_bench`` timing."""
+    def _benchmark_score(
+        self, code: str, exec_output: str, prompt_meta: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Score structure and record diagnostic ``do_bench`` timings.
+
+        The candidate controls the callable passed to do_bench, its inputs, and
+        its dtype. Consequently this is not a trusted KernelBench ``fast_p``
+        measurement and must not affect candidate ranking. A future trusted
+        speedup metric must have the harness invoke the launcher, verify its
+        output, and time it on harness-owned canonical inputs.
+        """
         checks = {
             "correctness": 1.0 if PASS_MARKER in exec_output or "allclose" in exec_output.lower() else 0.5,
             "autotune": 1.0 if "@triton.autotune" in code else 0.0,
@@ -223,6 +243,23 @@ except Exception as e:
             out["timing_ms"] = timings[len(timings) // 2]
             out["timing_samples"] = len(timings)
             out["timing_method"] = "monitored_triton_do_bench"
+
+        # The last monitored call is only a self-reported diagnostic. The
+        # nonce-bound wrapper proves that do_bench returned this value, but it
+        # cannot prove which callable, shape, dtype, or output was measured.
+        last_timings = [float(value) for value in LAST_TIMING_MARKER_RE.findall(exec_output)]
+        candidate_ms = last_timings[-1] if last_timings else None
+        if candidate_ms:
+            out["candidate_reported_timing_ms"] = candidate_ms
+            reference_ms = benchmark_reference(prompt_meta, gpu_index=self.gpu_index)
+            if reference_ms is not None:
+                out["reference_timing_ms"] = reference_ms
+                out["self_reported_speedup"] = reference_ms / candidate_ms
+                out["speedup_eligible"] = False
+                out["speedup_ineligible_reason"] = (
+                    "candidate controls benchmark callable/inputs/dtype; "
+                    "canonical-shape correctness is not harness-verified"
+                )
         return out
 
     @staticmethod
