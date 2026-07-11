@@ -14,6 +14,7 @@ from sparkproof.gateways import (
     GATEWAY_YUNWU,
     YUNWU_DEFAULT_ANTHROPIC,
     YUNWU_DEFAULT_OPENAI,
+    YUNWU_PINNED_SLUGS,
     get_gateway,
     resolve_api_key,
     yunwu_models_url,
@@ -21,18 +22,11 @@ from sparkproof.gateways import (
 from sparkproof.policy import REQUIRED_REASONING_EFFORT
 
 _ANTHROPIC_PREFS = (
-    "claude-sonnet-5",
-    "claude-sonnet-4-5",
-    "claude-sonnet-4",
-    "claude-3-5-sonnet",
-    "claude-3-7-sonnet",
+    "claude-fable-5",
 )
 _OPENAI_PREFS = (
+    "gpt-5.6-sol",
     "gpt-5.6",
-    "gpt-5-mini",
-    "gpt-5.4-mini",
-    "gpt-4o",
-    "gpt-4o-mini",
 )
 
 
@@ -126,20 +120,23 @@ def main(argv: list[str] | None = None) -> int:
     picked_openai = _pick_model(ids, _OPENAI_PREFS) or YUNWU_DEFAULT_OPENAI
 
     if args.auto or args.write_env:
+        missing = [slug for slug in sorted(YUNWU_PINNED_SLUGS) if slug not in ids]
+        if missing:
+            print(
+                f"error: token cannot see pinned production slugs {missing!r} — "
+                "yunwu must expose claude-fable-5 and gpt-5.6-sol for SparkProof production",
+                file=sys.stderr,
+            )
+            return 2
         ok_a, _, _ = _test_model(policy.chat_url, api_key, picked_anthropic)
         ok_o, _, _ = _test_model(policy.chat_url, api_key, picked_openai)
-        if not ok_a:
-            for i in ids:
-                if "claude" in i.lower():
-                    if _test_model(policy.chat_url, api_key, i)[0]:
-                        picked_anthropic = i
-                        break
-        if not ok_o:
-            for i in ids:
-                if "gpt" in i.lower():
-                    if _test_model(policy.chat_url, api_key, i)[0]:
-                        picked_openai = i
-                        break
+        if not ok_a or not ok_o:
+            print(
+                "error: smoke test failed for pinned production teachers — "
+                "confirm claude-fable-5 and gpt-5.6-sol are enabled on your yunwu token",
+                file=sys.stderr,
+            )
+            return 1
         print("\n# add to .env:")
         print(f"YUNWU_MODEL_ANTHROPIC={picked_anthropic}")
         print(f"YUNWU_MODEL_OPENAI={picked_openai}")

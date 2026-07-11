@@ -12,10 +12,12 @@ from sparkproof.gateways import (
     OPENROUTER_CHAT_URL,
     OPENROUTER_MODEL_ANTHROPIC,
     OPENROUTER_MODEL_OPENAI,
+    YUNWU_ACCEPTED_RESPONSE_SLUGS,
     YUNWU_API_BASE,
     YUNWU_CHAT_URL,
-    YUNWU_MODEL_ANTHROPIC,
-    YUNWU_MODEL_OPENAI,
+    YUNWU_DEFAULT_ANTHROPIC,
+    YUNWU_DEFAULT_OPENAI,
+    YUNWU_PINNED_SLUGS,
     allowed_teachers_for_gateway,
     gateway_model_for,
     get_gateway,
@@ -38,8 +40,8 @@ OPENROUTER_MODEL_BY_PROVIDER: dict[str, str] = {
 }
 
 YUNWU_MODEL_BY_PROVIDER: dict[str, str] = {
-    "anthropic": YUNWU_MODEL_ANTHROPIC,
-    "openai": YUNWU_MODEL_OPENAI,
+    "anthropic": YUNWU_DEFAULT_ANTHROPIC,
+    "openai": YUNWU_DEFAULT_OPENAI,
 }
 
 ALLOWED_MODELS: dict[str, frozenset[str]] = {
@@ -55,10 +57,32 @@ def openrouter_model_for(provider: str) -> str:
     return gateway_model_for(GATEWAY_OPENROUTER, provider)
 
 
+def _yunwu_slug_for_provider(provider: str) -> str:
+    if provider == "anthropic":
+        return YUNWU_DEFAULT_ANTHROPIC
+    if provider == "openai":
+        return YUNWU_DEFAULT_OPENAI
+    raise ValueError(f"unsupported yunwu provider {provider!r}")
+
+
+def _validate_yunwu_response_slug(provider: str, upstream_model: str) -> None:
+    slug = upstream_model.split("/")[-1] if "/" in upstream_model else upstream_model
+    if slug not in YUNWU_ACCEPTED_RESPONSE_SLUGS:
+        raise ValueError(
+            f"yunwu response model {slug!r} is not an allowed production teacher slug "
+            f"(expected {sorted(YUNWU_PINNED_SLUGS)!r})"
+        )
+    expected = _yunwu_slug_for_provider(provider)
+    if provider == "anthropic" and slug != expected:
+        raise ValueError(f"yunwu anthropic response must be {expected!r}, got {slug!r}")
+    if provider == "openai" and slug not in {YUNWU_DEFAULT_OPENAI, "gpt-5.6"}:
+        raise ValueError(f"yunwu openai response must be {YUNWU_DEFAULT_OPENAI!r} or gpt-5.6, got {slug!r}")
+
+
 def normalize_upstream_model(provider: str, upstream_model: str, *, gateway: str | None = None) -> str:
     """Map gateway/upstream model string to the logical teacher model id."""
     if gateway == GATEWAY_YUNWU:
-        # yunwu echoes native slugs (claude-sonnet-5, gpt-5-mini); logical teacher is by provider.
+        _validate_yunwu_response_slug(provider, upstream_model)
         if provider == "anthropic":
             return ANTHROPIC_TEACHER_MODEL
         if provider == "openai":
@@ -111,7 +135,15 @@ def validate_gateway_trajectory(record: dict[str, Any]) -> None:
 
     meta = record.get("metadata") or {}
     response_model = meta.get("gateway_response_model") or meta.get("openrouter_response_model")
-    if response_model and response_model != routed_model and gateway != GATEWAY_YUNWU:
+    if gateway == GATEWAY_YUNWU:
+        if routed_model not in YUNWU_PINNED_SLUGS:
+            raise ValueError(
+                f"yunwu gateway_model {routed_model!r} is not a pinned production slug "
+                f"(expected {sorted(YUNWU_PINNED_SLUGS)!r})"
+            )
+        if response_model:
+            _validate_yunwu_response_slug(record["provider"], response_model)
+    elif response_model and response_model != routed_model:
         raise ValueError(
             f"response model {response_model!r} does not match requested gateway_model {routed_model!r}"
         )
@@ -156,8 +188,9 @@ __all__ = [
     "TRITON_VERSION",
     "YUNWU_API_BASE",
     "YUNWU_CHAT_URL",
-    "YUNWU_MODEL_ANTHROPIC",
-    "YUNWU_MODEL_OPENAI",
+    "YUNWU_DEFAULT_ANTHROPIC",
+    "YUNWU_DEFAULT_OPENAI",
+    "YUNWU_PINNED_SLUGS",
     "allowed_teachers_manifest",
     "normalize_upstream_model",
     "openrouter_model_for",

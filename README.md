@@ -24,7 +24,7 @@ no Polaris, no CPU TDX:
 | Gateway | Base URL | Env key | Model slugs |
 |---|---|---|---|
 | **openrouter** (default) | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `anthropic/claude-fable-5`, `openai/gpt-5.6-sol` |
-| **yunwu** | `https://yunwu.ai/v1` | `YUNWU_API_KEY` | Native slugs from [yunwu docs](https://yunwu.apifox.cn/) — default `claude-sonnet-5`, `gpt-5-mini` (override via `YUNWU_MODEL_*`) |
+| **yunwu** | `https://yunwu.ai/v1` | `YUNWU_API_KEY` | `claude-fable-5`, `gpt-5.6-sol` (same teachers as OpenRouter; see [yunwu docs](https://yunwu.apifox.cn/)) |
 
 Set `SPARKPROOF_GATEWAY=yunwu` or pass `--gateway yunwu` to `sparkproof-generate` / `miner_run.sh`.
 

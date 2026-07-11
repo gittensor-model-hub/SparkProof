@@ -19,6 +19,7 @@ from sparkproof.merkle import merkle_root
 from sparkproof.gateways import ALLOWED_GATEWAYS
 from sparkproof.policy import (
     ALLOWED_MODELS,
+    GENERATOR_VERSION,
     REQUIRED_REASONING_EFFORT,
     allowed_teachers_manifest,
     validate_gateway_trajectory,
@@ -186,7 +187,99 @@ def verify_trajectories(trajectories: list[dict[str, Any]], manifest: dict[str, 
     return issues
 
 
-def verify_bundle(bundle_dir: Path, *, require_gpu_attestation: bool = True) -> dict[str, Any]:
+def _trajectory_teacher_fingerprint(record: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        record.get("prompt"),
+        record.get("response"),
+        record.get("provider"),
+        record.get("model"),
+        record.get("request_sha256"),
+        record.get("gateway"),
+        record.get("gateway_model") or record.get("openrouter_model"),
+    )
+
+
+def verify_pinned_generator(manifest: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    if manifest.get("generator_version") != GENERATOR_VERSION:
+        issues.append(
+            f"generator_version must be {GENERATOR_VERSION!r} "
+            f"(got {manifest.get('generator_version')!r}) — bundle was not produced by the pinned SparkProof release"
+        )
+    return issues
+
+
+def verify_production_artifacts(bundle_dir: Path) -> list[str]:
+    issues: list[str] = []
+    for name in (
+        "manifest.json",
+        "prompts.jsonl",
+        "trajectories.jsonl",
+        "trajectories_raw.jsonl",
+        "validation_report.jsonl",
+        "gpu_attestation.json",
+    ):
+        if not (bundle_dir / name).exists():
+            issues.append(f"missing production artifact: {name}")
+    return issues
+
+
+def verify_raw_to_verified_consistency(
+    bundle_dir: Path,
+    manifest: dict[str, Any],
+    verified: list[dict[str, Any]],
+) -> list[str]:
+    """Ensure verified rows are an unmodified subset of the attested raw archive."""
+    issues: list[str] = []
+    raw_path = bundle_dir / "trajectories_raw.jsonl"
+    report_path = bundle_dir / "validation_report.jsonl"
+    if not raw_path.exists() or not report_path.exists():
+        return issues
+
+    raw = _load_trajectories(raw_path)
+    reports = _load_trajectories(report_path)
+    expected_raw = manifest.get("raw_sample_count")
+    if expected_raw is not None and len(raw) != expected_raw:
+        issues.append(
+            f"raw_sample_count mismatch: manifest={expected_raw} trajectories_raw.jsonl={len(raw)}"
+        )
+    if len(reports) != len(raw):
+        issues.append(
+            f"validation_report.jsonl row count ({len(reports)}) does not match "
+            f"trajectories_raw.jsonl ({len(raw)})"
+        )
+
+    passing_indices: list[int] = []
+    for report in reports:
+        idx = report.get("index")
+        if idx is None or idx < 0 or idx >= len(raw):
+            issues.append(f"validation report index out of range: {idx!r}")
+            continue
+        if report.get("validation", {}).get("passed"):
+            passing_indices.append(idx)
+
+    verified_fps = {_trajectory_teacher_fingerprint(row) for row in verified}
+    for idx in passing_indices:
+        fp = _trajectory_teacher_fingerprint(raw[idx])
+        if fp not in verified_fps:
+            issues.append(
+                f"raw trajectory[{idx}] passed validation but no matching verified row — "
+                "verified trajectories may have been modified after proving"
+            )
+
+    for i, row in enumerate(verified):
+        if _trajectory_teacher_fingerprint(row) not in {
+            _trajectory_teacher_fingerprint(raw[idx]) for idx in passing_indices
+        }:
+            issues.append(
+                f"verified trajectory[{i}] does not match any passing raw archive row — "
+                "miner may have injected or altered rows after validation"
+            )
+
+    return issues
+
+
+def verify_bundle(bundle_dir: Path, *, require_gpu_attestation: bool = True, production: bool | None = None) -> dict[str, Any]:
     manifest_path = bundle_dir / "manifest.json"
     trajectories_path = bundle_dir / "trajectories.jsonl"
     prompts_path = bundle_dir / "prompts.jsonl"
@@ -196,19 +289,26 @@ def verify_bundle(bundle_dir: Path, *, require_gpu_attestation: bool = True) -> 
 
     manifest = _load_json(manifest_path)
     trajectories = _load_trajectories(trajectories_path)
+    strict_production = production if production is not None else require_gpu_attestation
     issues: list[str] = []
     issues.extend(verify_manifest_policy(manifest))
     issues.extend(verify_trajectory_request_hashes(trajectories, manifest))
+    if strict_production:
+        issues.extend(verify_pinned_generator(manifest))
+        issues.extend(verify_production_artifacts(bundle_dir))
 
     if manifest.get("version") == "sparkproof-2":
         issues.extend(verify_trajectories_v2(trajectories, manifest))
         if require_gpu_attestation:
             issues.extend(verify_gpu_attestation(bundle_dir, manifest))
-        validation_report = bundle_dir / "validation_report.jsonl"
-        if not validation_report.exists():
-            issues.append("missing validation_report.jsonl")
-        if not (bundle_dir / "trajectories_raw.jsonl").exists():
-            issues.append("missing trajectories_raw.jsonl archive")
+        if strict_production:
+            issues.extend(verify_raw_to_verified_consistency(bundle_dir, manifest, trajectories))
+        else:
+            validation_report = bundle_dir / "validation_report.jsonl"
+            if not validation_report.exists():
+                issues.append("missing validation_report.jsonl")
+            if not (bundle_dir / "trajectories_raw.jsonl").exists():
+                issues.append("missing trajectories_raw.jsonl archive")
     else:
         issues.extend(verify_trajectories(trajectories, manifest))
         if require_gpu_attestation:
