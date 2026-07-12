@@ -140,3 +140,46 @@ def test_missing_generation_id_is_flagged():
     record["metadata"] = {}
     issues = verify_openrouter_generations([record], api_key="k", fetch=lambda g, k: {})
     assert any("no openrouter_generation_id" in issue for issue in issues)
+
+
+def _make_token_with_device(private_key, platform_claims: dict, device_claims: dict) -> str:
+    encode = lambda payload: jwt.encode(  # noqa: E731
+        payload, private_key, algorithm="ES384", headers={"kid": "nras-test-key"}
+    )
+    composite = [
+        ["JWT", "outer-wrapper-ignored"],
+        {"REMOTE_GPU_CLAIMS": [["JWT", encode(platform_claims)], {"GPU-0": encode(device_claims)}]},
+    ]
+    return json.dumps(composite)
+
+
+def test_device_tokens_verified_and_exposed(keypair):
+    private, public = keypair
+    token = _make_token_with_device(
+        private,
+        {"iss": "https://nras.attestation.nvidia.com", "iat": int(time.time()), "eat_nonce": "aa" * 32},
+        {"iss": "https://nras.attestation.nvidia.com", "hwmodel": "GB20X"},
+    )
+    result = verify_nras_token(token, expected_nonce="aa" * 32, jwk_client=_StaticJwkClient(public))
+    assert result["verified"] is True
+    assert result["claims"]["devices"]["GPU-0"]["hwmodel"] == "GB20X"
+
+
+def test_forged_device_token_fails(keypair):
+    private, public = keypair
+    other = ec.generate_private_key(ec.SECP384R1())
+    forged_device = jwt.encode({"hwmodel": "GB20X"}, other, algorithm="ES384", headers={"kid": "nras-test-key"})
+    composite = json.dumps(
+        [
+            ["JWT", "outer-wrapper-ignored"],
+            {
+                "REMOTE_GPU_CLAIMS": [
+                    ["JWT", jwt.encode({"iss": "https://nras.attestation.nvidia.com", "iat": int(time.time())}, private, algorithm="ES384", headers={"kid": "nras-test-key"})],
+                    {"GPU-0": forged_device},
+                ]
+            },
+        ]
+    )
+    result = verify_nras_token(composite, jwk_client=_StaticJwkClient(public))
+    assert result["verified"] is False
+    assert any("GPU-0" in issue for issue in result["issues"])

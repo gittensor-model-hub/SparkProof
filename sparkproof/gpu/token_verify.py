@@ -35,6 +35,27 @@ def extract_detached_gpu_jwt(token: str) -> str | None:
         return None
 
 
+def extract_device_jwts(token: str) -> dict[str, str]:
+    """Pull the NVIDIA-signed per-device JWTs (e.g. GPU-0) out of the composite token.
+
+    These carry the hardware identity claims (``hwmodel``, driver/vbios versions)
+    that hardware corroboration should read from *signed* material rather than
+    the unsigned attestation JSON.
+    """
+    devices: dict[str, str] = {}
+    try:
+        parsed = json.loads(token)
+        detached = next(
+            entry for entry in parsed if isinstance(entry, dict) and _REMOTE_GPU_CLAIMS_KEY in entry
+        )
+        for entry in detached[_REMOTE_GPU_CLAIMS_KEY]:
+            if isinstance(entry, dict):
+                devices.update({str(k): str(v) for k, v in entry.items()})
+    except Exception:
+        pass
+    return devices
+
+
 def verify_nras_token(
     token: str,
     *,
@@ -106,5 +127,23 @@ def verify_nras_token(
             "signed eat_nonce does not match the expected dataset-bound nonce — "
             "token was not produced for this bundle's content"
         )
+
+    # Per-device tokens carry the hardware identity (hwmodel etc.); verify each
+    # signature so corroboration can trust those claims, not the unsigned JSON.
+    devices: dict[str, dict[str, Any]] = {}
+    for device, device_jwt in extract_device_jwts(token).items():
+        try:
+            device_key = client.get_signing_key_from_jwt(device_jwt)
+            devices[device] = jwt.decode(
+                device_jwt,
+                getattr(device_key, "key", device_key),
+                algorithms=_ACCEPTED_ALGORITHMS,
+                options={"verify_aud": False, "verify_exp": False},
+            )
+        except Exception as exc:
+            issues.append(f"device token {device}: signature could not be verified: {exc}")
+    if devices:
+        claims = dict(claims)
+        claims["devices"] = devices
 
     return {"verified": not issues, "issues": issues, "claims": claims}
