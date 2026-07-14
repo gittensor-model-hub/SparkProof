@@ -135,6 +135,24 @@ def test_openrouter_ledger_match_passes():
     assert issues == []
 
 
+def test_openrouter_ledger_accepts_dated_build_suffix():
+    def fetch(generation_id, api_key):
+        return {"data": {"id": generation_id, "model": "openai/gpt-5.6-sol-20260709"}}
+
+    record = _openrouter_record(model="openai/gpt-5.6-sol-20260709")
+    issues = verify_openrouter_generations([record], api_key="k", fetch=fetch)
+    assert issues == []
+
+
+def test_openrouter_ledger_accepts_legacy_pinned_record_with_dated_ledger():
+    def fetch(generation_id, api_key):
+        return {"data": {"id": generation_id, "model": "openai/gpt-5.6-sol-20260709"}}
+
+    record = _openrouter_record(model="openai/gpt-5.6-sol")
+    issues = verify_openrouter_generations([record], api_key="k", fetch=fetch)
+    assert issues == []
+
+
 def test_missing_generation_id_is_flagged():
     record = _openrouter_record()
     record["metadata"] = {}

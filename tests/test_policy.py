@@ -35,10 +35,31 @@ def test_validate_openrouter_trajectory_accepts_committed_fields():
         "gateway": GATEWAY,
         "api_base": OPENROUTER_API_BASE,
         "request_url": OPENROUTER_CHAT_URL,
+        "gateway_model": "anthropic/claude-fable-5",
         "openrouter_model": "anthropic/claude-fable-5",
         "metadata": {
             "openrouter_generation_id": "gen-abc",
+            "openrouter_requested_model": "anthropic/claude-fable-5",
             "openrouter_response_model": "anthropic/claude-fable-5",
+            "openrouter_reasoning_effort": "xhigh",
+        },
+    }
+    validate_openrouter_trajectory(record)
+
+
+def test_validate_openrouter_trajectory_accepts_dated_response_model():
+    record = {
+        "provider": "openai",
+        "model": "gpt-5.6",
+        "gateway": GATEWAY,
+        "api_base": OPENROUTER_API_BASE,
+        "request_url": OPENROUTER_CHAT_URL,
+        "gateway_model": "openai/gpt-5.6-sol-20260709",
+        "openrouter_model": "openai/gpt-5.6-sol-20260709",
+        "metadata": {
+            "openrouter_generation_id": "gen-abc",
+            "openrouter_requested_model": "openai/gpt-5.6-sol",
+            "openrouter_response_model": "openai/gpt-5.6-sol-20260709",
             "openrouter_reasoning_effort": "xhigh",
         },
     }

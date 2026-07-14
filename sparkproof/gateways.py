@@ -150,6 +150,18 @@ def trajectory_gateway_model(record: dict[str, Any]) -> str | None:
     return record.get("gateway_model") or record.get("openrouter_model")
 
 
+def openrouter_response_matches_pinned(actual: str, pinned: str) -> bool:
+    """Return whether an OpenRouter response/ledger model matches a pinned slug.
+
+    OpenRouter may echo a dated build id (e.g. openai/gpt-5.6-sol-20260709) for a
+    request routed to openai/gpt-5.6-sol. Treat exact matches and dated suffixes as
+    equivalent; reject unrelated models.
+    """
+    if actual == pinned:
+        return True
+    return actual.startswith(f"{pinned}-")
+
+
 def allowed_teachers_for_gateway(gateway: str) -> list[dict[str, str]]:
     from sparkproof.policy import (
         ANTHROPIC_TEACHER_MODEL,

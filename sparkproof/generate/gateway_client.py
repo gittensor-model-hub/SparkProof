@@ -69,14 +69,14 @@ def generate_via_gateway(
         temperature=temperature,
         reasoning_effort=reasoning_effort,
     )
-    gateway_model = body["model"]
+    requested_model = body["model"]
     request_sha = request_sha256(body)
     payload, response_headers = _post_chat(gateway=gateway, api_key=api_key, body=body)
     response_sha = sha256_hex(canonical_json_bytes(payload))
 
     choice = (payload.get("choices") or [{}])[0]
     message = choice.get("message") or {}
-    upstream_model = payload.get("model", gateway_model)
+    upstream_model = payload.get("model", requested_model)
     logical_model = normalize_upstream_model(
         provider,
         upstream_model.split("/")[-1] if "/" in upstream_model else upstream_model,
@@ -92,6 +92,7 @@ def generate_via_gateway(
         "native_finish_reason": choice.get("native_finish_reason"),
         "usage": payload.get("usage", {}),
         "gateway_generation_id": payload.get("id"),
+        "gateway_requested_model": requested_model,
         "gateway_response_model": upstream_model,
         "gateway_reasoning_effort": reasoning_effort,
         "gateway_max_tokens": max_tokens,
@@ -101,6 +102,7 @@ def generate_via_gateway(
         metadata.update(
             {
                 "openrouter_generation_id": payload.get("id"),
+                "openrouter_requested_model": requested_model,
                 "openrouter_response_model": upstream_model,
                 "openrouter_reasoning_effort": reasoning_effort,
                 "openrouter_max_tokens": max_tokens,
@@ -123,8 +125,8 @@ def generate_via_gateway(
         "gateway": gateway,
         "api_base": policy.api_base,
         "request_url": policy.chat_url,
-        "gateway_model": gateway_model,
-        "openrouter_model": gateway_model,
+        "gateway_model": upstream_model,
+        "openrouter_model": upstream_model,
         "request_sha256": request_sha,
         "response_sha256": response_sha,
         "metadata": metadata,
