@@ -80,10 +80,17 @@ def _validate_yunwu_response_slug(provider: str, upstream_model: str) -> None:
         raise ValueError(f"yunwu openai response must be {YUNWU_DEFAULT_OPENAI!r} or gpt-5.6, got {slug!r}")
 
 
+def _strip_dated_build_suffix(upstream_model: str, base_slug: str) -> str:
+    if upstream_model == base_slug or upstream_model.startswith(f"{base_slug}-"):
+        return base_slug
+    return upstream_model
+
+
 def _openai_logical_slug(upstream_model: str) -> str:
     """Strip OpenRouter dated build suffixes before logical model mapping."""
     for slug in ("gpt-5.6-sol", "gpt-5.6"):
-        if upstream_model == slug or upstream_model.startswith(f"{slug}-"):
+        stripped = _strip_dated_build_suffix(upstream_model, slug)
+        if stripped == slug:
             return slug
     return upstream_model
 
@@ -97,7 +104,9 @@ def normalize_upstream_model(provider: str, upstream_model: str, *, gateway: str
         if provider == "openai":
             return OPENAI_TEACHER_MODEL
 
-    if provider == "openai":
+    if provider == "anthropic":
+        upstream_model = _strip_dated_build_suffix(upstream_model, ANTHROPIC_TEACHER_MODEL)
+    elif provider == "openai":
         upstream_model = _openai_logical_slug(upstream_model)
 
     validate_provider_model(provider, upstream_model)
