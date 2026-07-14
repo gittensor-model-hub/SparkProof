@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 from sparkproof.gpu.token_verify import verify_nras_token
 from sparkproof.hashing import canonical_json_bytes, dataset_attestation_nonce, sha256_hex
+from sparkproof.gateways import openrouter_response_matches_pinned
 
 OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation"
 
@@ -115,11 +116,15 @@ def verify_openrouter_generations(
         data = payload.get("data") or payload
         ledger_model = data.get("model") or ""
         recorded_model = record.get("gateway_model") or record.get("openrouter_model") or ""
-        if ledger_model and ledger_model != recorded_model:
-            issues.append(
-                f"trajectory[{i}]: OpenRouter ledger says model {ledger_model!r} "
-                f"but bundle records {recorded_model!r}"
-            )
+        if ledger_model and recorded_model and ledger_model != recorded_model:
+            if not (
+                openrouter_response_matches_pinned(ledger_model, recorded_model)
+                or openrouter_response_matches_pinned(recorded_model, ledger_model)
+            ):
+                issues.append(
+                    f"trajectory[{i}]: OpenRouter ledger says model {ledger_model!r} "
+                    f"but bundle records {recorded_model!r}"
+                )
     return issues
 
 

@@ -21,6 +21,7 @@ from sparkproof.gateways import (
     allowed_teachers_for_gateway,
     gateway_model_for,
     get_gateway,
+    openrouter_response_matches_pinned,
     trajectory_gateway_model,
 )
 
@@ -79,6 +80,21 @@ def _validate_yunwu_response_slug(provider: str, upstream_model: str) -> None:
         raise ValueError(f"yunwu openai response must be {YUNWU_DEFAULT_OPENAI!r} or gpt-5.6, got {slug!r}")
 
 
+def _strip_dated_build_suffix(upstream_model: str, base_slug: str) -> str:
+    if upstream_model == base_slug or upstream_model.startswith(f"{base_slug}-"):
+        return base_slug
+    return upstream_model
+
+
+def _openai_logical_slug(upstream_model: str) -> str:
+    """Strip OpenRouter dated build suffixes before logical model mapping."""
+    for slug in ("gpt-5.6-sol", "gpt-5.6"):
+        stripped = _strip_dated_build_suffix(upstream_model, slug)
+        if stripped == slug:
+            return slug
+    return upstream_model
+
+
 def normalize_upstream_model(provider: str, upstream_model: str, *, gateway: str | None = None) -> str:
     """Map gateway/upstream model string to the logical teacher model id."""
     if gateway == GATEWAY_YUNWU:
@@ -87,6 +103,11 @@ def normalize_upstream_model(provider: str, upstream_model: str, *, gateway: str
             return ANTHROPIC_TEACHER_MODEL
         if provider == "openai":
             return OPENAI_TEACHER_MODEL
+
+    if provider == "anthropic":
+        upstream_model = _strip_dated_build_suffix(upstream_model, ANTHROPIC_TEACHER_MODEL)
+    elif provider == "openai":
+        upstream_model = _openai_logical_slug(upstream_model)
 
     validate_provider_model(provider, upstream_model)
     if provider == "anthropic":
@@ -118,22 +139,40 @@ def validate_gateway_trajectory(record: dict[str, Any]) -> None:
     if record.get("request_url") != policy.chat_url:
         raise ValueError(f"request_url must be {policy.chat_url!r}, got {record.get('request_url')!r}")
 
-    routed_model = trajectory_gateway_model(record)
-    allowed_models = frozenset(policy.models_by_provider.values())
-    if routed_model not in allowed_models:
-        raise ValueError(
-            f"gateway_model {routed_model!r} not allowed for {gateway!r}; "
-            f"expected one of {sorted(allowed_models)}"
-        )
-
-    expected_slug = policy.models_by_provider.get(record["provider"])
-    if routed_model != expected_slug:
-        raise ValueError(
-            f"gateway_model {routed_model!r} does not match provider "
-            f"{record['provider']!r} (expected {expected_slug!r})"
-        )
-
     meta = record.get("metadata") or {}
+    requested_model = (
+        meta.get("gateway_requested_model")
+        or meta.get("openrouter_requested_model")
+        or policy.models_by_provider.get(record["provider"])
+    )
+    if requested_model != policy.models_by_provider.get(record["provider"]):
+        raise ValueError(
+            f"gateway requested model {requested_model!r} does not match provider "
+            f"{record['provider']!r} (expected {policy.models_by_provider[record['provider']]!r})"
+        )
+
+    routed_model = trajectory_gateway_model(record)
+    if gateway == GATEWAY_OPENROUTER:
+        pinned = policy.models_by_provider[record["provider"]]
+        if not routed_model or not openrouter_response_matches_pinned(routed_model, pinned):
+            raise ValueError(
+                f"gateway_model {routed_model!r} is not a pinned OpenRouter teacher for "
+                f"{record['provider']!r} (expected {pinned!r} or a dated build suffix)"
+            )
+    else:
+        allowed_models = frozenset(policy.models_by_provider.values())
+        if routed_model not in allowed_models:
+            raise ValueError(
+                f"gateway_model {routed_model!r} not allowed for {gateway!r}; "
+                f"expected one of {sorted(allowed_models)}"
+            )
+        expected_slug = policy.models_by_provider.get(record["provider"])
+        if routed_model != expected_slug:
+            raise ValueError(
+                f"gateway_model {routed_model!r} does not match provider "
+                f"{record['provider']!r} (expected {expected_slug!r})"
+            )
+
     response_model = meta.get("gateway_response_model") or meta.get("openrouter_response_model")
     if gateway == GATEWAY_YUNWU:
         if routed_model not in YUNWU_PINNED_SLUGS:
@@ -145,7 +184,7 @@ def validate_gateway_trajectory(record: dict[str, Any]) -> None:
             _validate_yunwu_response_slug(record["provider"], response_model)
     elif response_model and response_model != routed_model:
         raise ValueError(
-            f"response model {response_model!r} does not match requested gateway_model {routed_model!r}"
+            f"response model {response_model!r} does not match recorded gateway_model {routed_model!r}"
         )
 
     if gateway == GATEWAY_OPENROUTER:
@@ -194,6 +233,7 @@ __all__ = [
     "allowed_teachers_manifest",
     "normalize_upstream_model",
     "openrouter_model_for",
+    "openrouter_response_matches_pinned",
     "trajectory_gateway_model",
     "validate_gateway_trajectory",
     "validate_openrouter_trajectory",
