@@ -64,6 +64,27 @@ Pairs with SparkDistill [#122](https://github.com/gittensor-model-hub/SparkDisti
 
 ---
 
+## [0.1.2] — 2026-07-15
+
+Miner-side accepted-registry snapshot download so novelty checks catch cross-registry
+duplicates before publish — pairs with SparkDistill [#119](https://github.com/gittensor-model-hub/SparkDistill/pull/119).
+
+`generator_version` remains **0.3.0** (package release `0.1.2`).
+
+### Added
+
+- **`sparkproof/triton_dataset/registry_snapshot.py`** — download
+  `accepted_registry_snapshot.jsonl` + `mix_manifest.json` from the canonical mining HF
+  repo; verify `accepted_registry_snapshot_sha256` and row-count pins.
+- **`sparkproof-download-registry-snapshot`** CLI + `scripts/download_registry_snapshot.sh`
+  — local download with optional `--verify-only` against live pins.
+- **`sparkproof-publish-dataset --mining-repo`** — bare flag downloads from
+  `gittensor-model-hub/sparkproof-mining` and passes the verified snapshot to the release
+  gate (alternative to manual `--registry-snapshot`).
+- **`docs/MINER_GUIDE.md`** — dataset-track workflow including registry dedupe prevention.
+
+---
+
 ## [Unreleased] — online trust anchors (PR #17, shipped in v0.1.0)
 
 Closes the remaining gap where a miner could fabricate `gpu_attestation.json` or replay an attestation token from another bundle. Offline verification proves internal consistency; online verification anchors the bundle to NVIDIA's and (optionally) OpenRouter's external roots of trust.
@@ -315,5 +336,7 @@ Set `SPARKPROOF_RUN_GPU_TESTS=1` on a Blackwell or Hopper runner. Triton JIT req
 ---
 
 [Unreleased]: https://github.com/gittensor-model-hub/SparkProof/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/gittensor-model-hub/SparkProof/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.2
 [0.1.1]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.1
 [0.1.0]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.0

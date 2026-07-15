@@ -38,6 +38,7 @@ Set `SPARKPROOF_GATEWAY=yunwu` or pass `--gateway yunwu` to `sparkproof-generate
 | Path | What |
 |---|---|
 | [`sparkproof/`](sparkproof) | gateway clients, GPU attestation, manifest/Merkle verification, Triton dataset pipeline |
+| [`docs/MINER_GUIDE.md`](docs/MINER_GUIDE.md) | **dataset-track miner workflow** (generate → dedupe check → publish → registry PR) |
 | [`scripts/`](scripts) | one-command install/generate/verify/pipeline entry points |
 | [`policies/`](policies) | pinned teacher + GPU policy (`gpu_remote_v3.json`) |
 | [`tests/`](tests) | manifest, Merkle, policy, and gateway unit tests |
@@ -117,8 +118,29 @@ Multi-candidate uses **yunwu/openrouter** gateways (Fable 5 + GPT 5.6 xhigh), no
 `sparkproof-publish-dataset` uploads the dataset rows **and** the bundle's proof
 artifacts (`manifest.json`, `dataset_manifest.json`, `gpu_attestation.json`,
 `trajectories.jsonl`, ...) under `proof/` in the same HF repo. That is what lets a
-SparkDistill validator re-verify everything from the HF link alone. To get the dataset
-rewarded (`dataset:xs/s/m/l/xl`), open a text-only PR appending your HF URL and
+SparkDistill validator re-verify everything from the HF link alone.
+
+**Avoid registry dedupe surprises:** see **[`docs/MINER_GUIDE.md`](docs/MINER_GUIDE.md#avoid-registry-dedupe-surprises)**
+for the full workflow. Short version — pass SparkDistill's pinned
+`accepted_registry_snapshot.jsonl` to the release gate so `novelty_report.json` counts
+cross-registry duplicates before you open a dataset PR:
+
+```bash
+uv sync --extra publish --frozen
+
+# Recommended: download + verify + publish in one step
+sparkproof-publish-dataset --bundle bundles/run-001 --repo-id your-org/dataset \
+  --release-gate --mining-repo
+
+# Or download first, then publish with an explicit path
+scripts/download_registry_snapshot.sh --out-dir ./snapshots
+sparkproof-publish-dataset --bundle bundles/run-001 --repo-id your-org/dataset \
+  --release-gate --registry-snapshot ./snapshots/accepted_registry_snapshot.jsonl
+```
+
+Target **`novel_verified_rows` ≥ 25** in `novelty_report.json` before opening a registry PR.
+
+To get the dataset rewarded (`dataset:xs/s/m/l/xl`), open a text-only PR appending your HF URL and
 `trajectories_sha256` to SparkDistill's `datasets/registry.jsonl` — see
 `SparkDistill/datasets/README.md`.
 
