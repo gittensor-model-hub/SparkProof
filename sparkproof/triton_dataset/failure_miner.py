@@ -4,40 +4,52 @@ from __future__ import annotations
 
 from typing import Any
 
+from sparkproof.gpu.architecture import ARCH_BLACKWELL, sm_label
 from sparkproof.triton_dataset.multi_candidate import extract_code
 from sparkproof.triton_dataset.task_policy import FORBIDDEN_TRAINING_ORIGINS, normalize_train_task
 
 FAILURE_TEMPLATES: dict[str, str] = {
     "compile_error": (
-        "Write a Triton 3.7.1 kernel for Blackwell SM12x: row-wise {op} with tail dimension N=8191, "
+        "Write a Triton 3.7.1 kernel for {gpu_label}: row-wise {{op}} with tail dimension N=8191, "
         "explicit masks, fp32 accumulator, and torch.allclose test."
     ),
     "tail_mask_failure": (
-        "Write a row {op} kernel where N is not divisible by BLOCK_SIZE (use N=6143). "
+        "Write a row {{op}} kernel where N is not divisible by BLOCK_SIZE (use N=6143). "
         "Mask all loads/stores. Include torch.allclose vs PyTorch."
     ),
     "stride_error": (
-        "Write a Triton kernel for {op} on a **non-contiguous** strided tensor. "
+        "Write a Triton kernel for {{op}} on a **non-contiguous** strided tensor. "
         "Validate against PyTorch on the same strided layout."
     ),
     "dtype_error": (
-        "Write a bf16 {op} kernel with fp32 accumulation. Compare to PyTorch bf16 reference with tolerance."
+        "Write a bf16 {{op}} kernel with fp32 accumulation. Compare to PyTorch bf16 reference with tolerance."
     ),
     "wrong_api_version": (
-        "Write Triton 3.7.1 kernel using tl.make_tensor_descriptor (not block_ptr) for {op} on Blackwell."
+        "Write Triton 3.7.1 kernel using tl.make_tensor_descriptor (not block_ptr) for {{op}} on {gpu_label}."
     ),
     "runtime_error": (
-        "Write a robust {op} kernel with grid computed via tl.cdiv and boundary checks for arbitrary M,N."
+        "Write a robust {{op}} kernel with grid computed via tl.cdiv and boundary checks for arbitrary M,N."
     ),
     "parse_error": (
-        "Write a complete, syntactically valid Triton 3.7.1 implementation of {op}. "
+        "Write a complete, syntactically valid Triton 3.7.1 implementation of {{op}}. "
         "Include imports, @triton.jit kernel, launcher, and executable torch.allclose test."
     ),
     "performance_regression": (
-        "Optimize a correct {op} Triton kernel for Blackwell SM12x. Add representative autotune configs, "
+        "Optimize a correct {{op}} Triton kernel for {gpu_label}. Add representative autotune configs, "
         "preserve numerical correctness, and benchmark against the PyTorch reference."
     ),
 }
+
+
+def failure_template(failure_class: str, gpu_architecture: str = ARCH_BLACKWELL) -> str:
+    """Resolve a failure-class template, formatted for `gpu_architecture`.
+
+    Templates are stored with `{gpu_label}` pre-substituted and `{{op}}` still
+    escaped, so the returned string has exactly one remaining `{op}` placeholder
+    for the caller to fill in.
+    """
+    template = FAILURE_TEMPLATES.get(failure_class, FAILURE_TEMPLATES["compile_error"])
+    return template.format(gpu_label=sm_label(gpu_architecture))
 
 
 def classify_failure(validation: dict[str, Any]) -> str:
@@ -83,7 +95,7 @@ def record_failure(
         "tags": [task.get("category") or "triton", task.get("task_family") or "kernel"],
         "task_family": task.get("task_family"),
         "category": task.get("category"),
-        "gpu_arch": "blackwell",
+        "gpu_arch": task.get("gpu_architecture", ARCH_BLACKWELL),
         "triton_version": "3.7.1",
         "broken_code": extract_code(response),
     }
@@ -96,7 +108,8 @@ def mine_failure_to_tasks(failure: dict[str, Any], *, n: int = 2) -> list[dict[s
         return []
 
     failure_class = failure.get("failure_class", "compile_error")
-    template = FAILURE_TEMPLATES.get(failure_class, FAILURE_TEMPLATES["compile_error"])
+    gpu_architecture = failure.get("gpu_arch", ARCH_BLACKWELL)
+    template = failure_template(failure_class, gpu_architecture)
     tags = failure.get("tags") or []
     op = failure.get("task_family") or (tags[1] if len(tags) > 1 else None) or "kernel"
 
@@ -115,6 +128,7 @@ def mine_failure_to_tasks(failure: dict[str, Any], *, n: int = 2) -> list[dict[s
                 "prompt": prompt,
                 "parent_failure_class": failure_class,
                 "parent_run_id": failure.get("run_id"),
+                "gpu_architecture": gpu_architecture,
             }
         )
         tasks.append(task)

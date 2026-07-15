@@ -172,3 +172,48 @@ def test_run_release_gate_excludes_blocked_rows_from_novelty(tmp_path: Path):
 
     manifest = json.loads((bundle / "dataset_manifest.json").read_text())
     assert manifest["novelty"]["verified_rows"] == 1
+
+
+def test_run_release_gate_carries_hopper_gpu_architecture(tmp_path: Path):
+    _write_eval_corpus(tmp_path / "eval")
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text(json.dumps({"prompt": "x"}) + "\n")
+    trajectories = [_verified_traj("api_tl_load")]
+    gpu_profile = {
+        "family": "hopper",
+        "gpu_architecture": "hopper-h100",
+        "name": "NVIDIA H100 80GB HBM3",
+        "capability": [9, 0],
+        "device_index": 0,
+    }
+    manifest = build_manifest_v2(
+        trajectories,
+        prompts_sha256=sha256_file(str(prompts)),
+        gpu_profile=gpu_profile,
+        raw_sample_count=len(trajectories),
+        benchmark_enabled=False,
+        openrouter_generation_config=TEST_GEN_CONFIG,
+        attestation_hash="e" * 64,
+    ).to_dict()
+    bundle = tmp_path / "bundle"
+    write_bundle(out_dir=bundle, trajectories=trajectories, manifest=manifest, prompts_path=prompts)
+    (bundle / "trajectories_raw.jsonl").write_text((bundle / "trajectories.jsonl").read_text())
+    (bundle / "validation_report.jsonl").write_text(
+        json.dumps({"index": 0, "validation": trajectories[0]["sparkproof_validation"]}) + "\n"
+    )
+    (bundle / "gpu_attestation.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "environment": "REMOTE",
+                "token": "tok",
+                "claims": {},
+                "gpu_profile": gpu_profile,
+                "token_sha256": "e" * 64,
+            }
+        )
+    )
+
+    dataset_manifest = run_release_gate(bundle, problems_dir=tmp_path / "eval")
+    assert dataset_manifest["gpu_architecture"] == "hopper-h100"
+    assert dataset_manifest["gpu_targets"] == ["hopper-h100"]

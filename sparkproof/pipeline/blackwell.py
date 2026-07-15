@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sparkproof.blackwell.gpu import require_blackwell_gpu
+from sparkproof.gpu.architecture import require_supported_gpu
 from sparkproof.gpu.attestation import GpuAttestationResult, attest_blackwell_gpu
 from sparkproof.hashing import canonical_json_bytes, dataset_attestation_nonce, sha256_file, sha256_hex
 from sparkproof.manifest import build_manifest_v2
@@ -70,7 +70,7 @@ def prove_blackwell_bundle(
     if prompts_path.exists() and not prompts_sha256:
         prompts_sha256 = sha256_file(str(prompts_path))
 
-    gpu_profile = require_blackwell_gpu(gpu_index)
+    gpu_profile = require_supported_gpu(gpu_index)
 
     raw = _load_trajectories(trajectories_path)
     _write_jsonl(bundle_dir / "trajectories_raw.jsonl", raw)
@@ -119,7 +119,7 @@ def prove_blackwell_bundle(
     if pass_rate < min_pass_rate:
         raise RuntimeError(
             f"pass rate {pass_rate:.1%} below minimum {min_pass_rate:.1%} "
-            f"({len(verified)}/{len(raw)} trajectories verified on Blackwell)"
+            f"({len(verified)}/{len(raw)} trajectories verified on {gpu_profile.get('gpu_architecture', 'blackwell')})"
         )
 
     attestation_hash = gpu_attestation.token_sha256() if gpu_attestation and gpu_attestation.passed else None
@@ -175,7 +175,7 @@ def prove_blackwell_trajectories(
     """Validate in-memory trajectories (used right after generation)."""
     strict_validate = strict_validate or _has_validation_stage(trajectories, "anti_cheat")
     capture_ir = capture_ir or _has_validation_stage(trajectories, "ir_artifacts")
-    gpu_profile = require_blackwell_gpu(gpu_index)
+    gpu_profile = require_supported_gpu(gpu_index)
     gpu_attestation = None
     if attest_gpu:
         nonce = dataset_attestation_nonce(prompts_sha256, sha256_hex(canonical_json_bytes(trajectories)))

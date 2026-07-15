@@ -12,7 +12,7 @@ from sparkproof.policy import (
     validate_openrouter_trajectory,
 )
 from sparkproof.hashing import canonical_json_bytes, dataset_attestation_nonce, sha256_hex
-from sparkproof.verify import verify_bundle, verify_gpu_attestation
+from sparkproof.verify import verify_bundle, verify_gpu_attestation, verify_manifest_policy
 from tests.conftest_helpers import TEST_GEN_CONFIG, make_trajectory
 
 
@@ -87,3 +87,53 @@ def test_verify_rejects_direct_api_trajectory(tmp_path: Path):
     record["gateway"] = "direct"
     with pytest.raises(ValueError, match="gateway"):
         validate_openrouter_trajectory(record)
+
+
+def _sparkproof2_manifest(**overrides):
+    base = {
+        "version": "sparkproof-2",
+        "gateway": "openrouter",
+        "allowed_teachers": allowed_teachers_manifest("openrouter"),
+        "dataset_kind": "triton-3.7.1-blackwell",
+        "gpu_profile": {"family": "blackwell", "gpu_architecture": "blackwell"},
+        "gpu_architecture": "blackwell",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_verify_manifest_policy_accepts_blackwell():
+    issues = verify_manifest_policy(_sparkproof2_manifest())
+    assert not any("gpu_architecture" in i for i in issues)
+
+
+def test_verify_manifest_policy_accepts_hopper_h100():
+    manifest = _sparkproof2_manifest(
+        gpu_profile={"family": "hopper", "gpu_architecture": "hopper-h100"},
+        gpu_architecture="hopper-h100",
+    )
+    issues = verify_manifest_policy(manifest)
+    assert not any("gpu_architecture" in i for i in issues)
+
+
+def test_verify_manifest_policy_rejects_unsupported_architecture():
+    manifest = _sparkproof2_manifest(
+        gpu_profile={"family": "ampere", "gpu_architecture": "ampere-a100"},
+        gpu_architecture="ampere-a100",
+    )
+    issues = verify_manifest_policy(manifest)
+    assert any("gpu_architecture" in i for i in issues)
+
+
+def test_verify_manifest_policy_rejects_missing_architecture():
+    manifest = _sparkproof2_manifest(gpu_profile={}, gpu_architecture=None)
+    issues = verify_manifest_policy(manifest)
+    assert any("gpu_architecture" in i for i in issues)
+
+
+def test_verify_manifest_policy_reads_architecture_from_gpu_profile_fallback():
+    # Older callers might only set gpu_profile.gpu_architecture without the
+    # top-level manifest field — still accepted via fallback.
+    manifest = _sparkproof2_manifest(gpu_architecture=None, gpu_profile={"gpu_architecture": "hopper-h200"})
+    issues = verify_manifest_policy(manifest)
+    assert not any("gpu_architecture" in i for i in issues)

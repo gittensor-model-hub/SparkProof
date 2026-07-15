@@ -89,3 +89,12 @@ def test_ast_structure_stable():
 def test_semantic_fingerprint():
     fp = semantic_task_fingerprint({"task_family": "softmax", "dtype": "fp16", "shape_class": "M_x_tail_N"})
     assert len(fp) == 64
+
+
+def test_semantic_fingerprint_distinguishes_architectures():
+    task = {"task_family": "softmax", "dtype": "fp16", "shape_class": "M_x_tail_N"}
+    blackwell_fp = semantic_task_fingerprint(task)
+    hopper_fp = semantic_task_fingerprint({**task, "gpu_architecture": "hopper-h100"})
+    default_fp = semantic_task_fingerprint({**task, "gpu_architecture": "blackwell"})
+    assert blackwell_fp == default_fp  # unset defaults identically to explicit "blackwell"
+    assert blackwell_fp != hopper_fp

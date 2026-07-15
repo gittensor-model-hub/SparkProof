@@ -6,6 +6,7 @@ import datetime
 from dataclasses import dataclass
 from typing import Any
 
+from sparkproof.gpu.architecture import ARCH_BLACKWELL
 from sparkproof.hashing import canonical_json_bytes, sample_leaf_hash, sha256_hex, verified_sample_leaf_hash
 from sparkproof.merkle import merkle_root
 from sparkproof.policy import (
@@ -101,6 +102,7 @@ class BlackwellDatasetManifest:
     created_at: str
     gpu_profile: dict[str, Any]
     validation: dict[str, Any]
+    gpu_architecture: str = ARCH_BLACKWELL
     attestation_hash: str | None = None
     sampling: dict[str, Any] | None = None
 
@@ -119,6 +121,7 @@ class BlackwellDatasetManifest:
             "prompts_sha256": self.prompts_sha256,
             "created_at": self.created_at,
             "gpu_profile": self.gpu_profile,
+            "gpu_architecture": self.gpu_architecture,
             "validation": self.validation,
         }
         if self.attestation_hash is not None:
@@ -162,6 +165,7 @@ def build_manifest_v2(
         prompts_sha256=prompts_sha256,
         created_at=datetime.datetime.now(datetime.UTC).isoformat(),
         gpu_profile=gpu_profile,
+        gpu_architecture=gpu_profile.get("gpu_architecture", ARCH_BLACKWELL),
         validation={
             "triton_version": TRITON_VERSION,
             "stages": ["syntax", "triton_api", "compile_execute"]

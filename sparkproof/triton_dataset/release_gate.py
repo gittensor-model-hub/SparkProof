@@ -72,6 +72,19 @@ def check_trajectory_row(traj: dict[str, Any], decon: TritonDecontaminator) -> l
     return issues
 
 
+def _bundle_gpu_architecture(bundle_dir: Path) -> str:
+    """Read the sparkproof-2 manifest's gpu_architecture (set by build_manifest_v2).
+
+    Falls back to "blackwell" for pre-Hopper-support bundles whose manifest.json
+    predates the field.
+    """
+    manifest_path = bundle_dir / "manifest.json"
+    if not manifest_path.exists():
+        return "blackwell"
+    manifest = json.loads(manifest_path.read_text())
+    return manifest.get("gpu_architecture") or manifest.get("gpu_profile", {}).get("gpu_architecture") or "blackwell"
+
+
 def build_manifest(
     *,
     trajectories: list[dict[str, Any]],
@@ -90,10 +103,12 @@ def build_manifest(
         if (t.get("metadata") or {}).get("dpo_pair"):
             dpo += 1
 
+    gpu_architecture = _bundle_gpu_architecture(bundle_dir)
     manifest = {
         "dataset_version": dataset_version,
         "triton_version": "3.7.1",
-        "gpu_targets": ["blackwell"],
+        "gpu_architecture": gpu_architecture,
+        "gpu_targets": [gpu_architecture],
         "rows_total": len(trajectories),
         "gold_rows": gold,
         "silver_rows": silver,

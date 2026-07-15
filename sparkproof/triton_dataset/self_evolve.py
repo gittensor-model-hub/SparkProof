@@ -7,6 +7,7 @@ import hashlib
 import random
 from typing import Any
 
+from sparkproof.gpu.architecture import ARCH_BLACKWELL, sm_label
 from sparkproof.triton_dataset.run_seed import evolution_seed
 from sparkproof.triton_dataset.task_policy import is_evolution_parent_allowed, normalize_train_task
 
@@ -34,10 +35,10 @@ _OP_PROMPTS: dict[str, str] = {
         "```python\n{ground_truth}\n```"
     ),
     "optimization_target": (
-        "Add @triton.autotune with at least 3 configs and tune num_warps/num_stages for Blackwell SM12x."
+        "Add @triton.autotune with at least 3 configs and tune num_warps/num_stages for {gpu_label}."
     ),
     "blackwell_autotune": (
-        "Target Blackwell SM12x explicitly; prefer tl.make_tensor_descriptor where applicable over deprecated block_ptr."
+        "Target {gpu_label} explicitly; prefer tl.make_tensor_descriptor where applicable over deprecated block_ptr."
     ),
 }
 
@@ -54,8 +55,9 @@ def apply_evolution(parent: dict[str, Any], operation: str) -> dict[str, Any] | 
     child["evolution_ops"] = list(parent.get("evolution_ops", [])) + [operation]
     child["difficulty"] = min(5, int(parent.get("difficulty", 1)) + 1)
 
+    gpu_architecture = parent.get("gpu_architecture", ARCH_BLACKWELL)
+    gpu_label = sm_label(gpu_architecture)
     base_prompt = parent.get("prompt", "")
-    op_text = _OP_PROMPTS.get(operation, operation)
 
     if operation == "inject_bug":
         gt = parent.get("ground_truth_code") or ""
@@ -65,14 +67,16 @@ def apply_evolution(parent: dict[str, Any], operation: str) -> dict[str, Any] | 
 
         broken, reason = strip_boundary_mask(gt)
         child["prompt"] = (
-            f"Fix the Triton 3.7.1 kernel bug on Blackwell SM12x.\n\n```python\n{broken}\n```\n\nHint: {reason}"
+            f"Fix the Triton 3.7.1 kernel bug on {gpu_label}.\n\n```python\n{broken}\n```\n\nHint: {reason}"
         )
         child["ground_truth_code"] = gt
         child["category"] = "debugging"
     else:
+        op_text = _OP_PROMPTS.get(operation, operation).format(gpu_label=gpu_label)
         child["prompt"] = f"{base_prompt}\n\nAdditional requirement: {op_text}"
         child["category"] = parent.get("category", "kernel_generation")
 
+    child["gpu_architecture"] = gpu_architecture
     child["task_id"] = f"evolve_{parent.get('task_id', 'parent')}_{operation}"
     return normalize_train_task(child)
 

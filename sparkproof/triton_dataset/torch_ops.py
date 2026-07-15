@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from sparkproof.gpu.architecture import ARCH_BLACKWELL, sm_label
 from sparkproof.triton_dataset.reference_bench import DEFAULT_BENCHMARK_SIZES
 
 TORCH_OPS = [
@@ -127,9 +128,12 @@ def _benchmark_size_hint(shapes: dict[str, str]) -> str:
     return ", ".join(f"{key}={value}" for key, value in sizes.items())
 
 
-def build_torch_translation_prompt(op: dict, *, shape_preset: dict[str, int] | None = None) -> dict:
+def build_torch_translation_prompt(
+    op: dict, *, shape_preset: dict[str, int] | None = None, gpu_architecture: str = ARCH_BLACKWELL
+) -> dict:
     benchmark_sizes = _benchmark_size_hint(op["shapes"])
-    prompt = f"""Write a Triton 3.7.1 kernel replicating this PyTorch operation on Blackwell SM12x:
+    gpu_label = sm_label(gpu_architecture)
+    prompt = f"""Write a Triton 3.7.1 kernel replicating this PyTorch operation on {gpu_label}:
 
 Operation: `{op['code']}`
 Shapes: {json.dumps(op['shapes'])}
@@ -167,14 +171,17 @@ Requirements:
         "torch_reference": op["code"],
         "reference_expr": op["code"],
         "shapes": op["shapes"],
+        "gpu_architecture": gpu_architecture,
     }
 
 
-def iter_torch_translation_prompts(*, include_shape_variants: bool = False) -> list[dict]:
-    prompts = [build_torch_translation_prompt(op) for op in TORCH_OPS]
+def iter_torch_translation_prompts(
+    *, include_shape_variants: bool = False, gpu_architecture: str = ARCH_BLACKWELL
+) -> list[dict]:
+    prompts = [build_torch_translation_prompt(op, gpu_architecture=gpu_architecture) for op in TORCH_OPS]
     if not include_shape_variants:
         return prompts
     for op in TORCH_OPS:
         for preset in ADVERSARIAL_SHAPE_PRESETS:
-            prompts.append(build_torch_translation_prompt(op, shape_preset=preset))
+            prompts.append(build_torch_translation_prompt(op, shape_preset=preset, gpu_architecture=gpu_architecture))
     return prompts

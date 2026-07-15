@@ -52,7 +52,14 @@ def text_fingerprint(text: str) -> str:
 
 
 def semantic_task_fingerprint(task: dict[str, Any]) -> str:
-    """Normalized metadata fingerprint for near-duplicate task detection."""
+    """Normalized metadata fingerprint for near-duplicate task detection.
+
+    `target` defaults to "blackwell" for rows with no `gpu_architecture` (all
+    pre-existing corpora), so fingerprints for that default population are
+    unchanged. Rows targeting a different architecture get a distinct
+    fingerprint even if otherwise identical — they are legitimately different
+    training examples, not duplicates.
+    """
     payload = {
         "op": task.get("task_family") or task.get("category"),
         "target_api": task.get("target_api"),
@@ -60,7 +67,7 @@ def semantic_task_fingerprint(task: dict[str, Any]) -> str:
         "dtype": task.get("dtype"),
         "shape_class": task.get("shape_class"),
         "layout": task.get("layout"),
-        "target": "blackwell",
+        "target": task.get("gpu_architecture", "blackwell"),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 

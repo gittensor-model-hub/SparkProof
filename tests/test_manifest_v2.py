@@ -134,3 +134,39 @@ def test_verify_sparkproof_v2_bundle(tmp_path: Path):
     assert report["verified"] is True
     assert report["manifest_version"] == "sparkproof-2"
     assert report["gpu_attested"] is True
+
+
+def test_build_manifest_v2_defaults_gpu_architecture_to_blackwell(tmp_path: Path):
+    trajectories = [_verified_traj("anthropic", "claude-fable-5", "anthropic/claude-fable-5")]
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text(json.dumps({"prompt": "x"}) + "\n")
+    manifest = build_manifest_v2(
+        trajectories,
+        prompts_sha256=sha256_file(str(prompts)),
+        gpu_profile={"family": "blackwell", "profile": "workstation", "name": "x", "capability": [12, 0]},
+        raw_sample_count=1,
+        benchmark_enabled=False,
+        openrouter_generation_config=TEST_GEN_CONFIG,
+    ).to_dict()
+    assert manifest["gpu_architecture"] == "blackwell"
+
+
+def test_build_manifest_v2_carries_hopper_gpu_architecture(tmp_path: Path):
+    trajectories = [_verified_traj("anthropic", "claude-fable-5", "anthropic/claude-fable-5")]
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text(json.dumps({"prompt": "x"}) + "\n")
+    manifest = build_manifest_v2(
+        trajectories,
+        prompts_sha256=sha256_file(str(prompts)),
+        gpu_profile={
+            "family": "hopper",
+            "gpu_architecture": "hopper-h100",
+            "name": "NVIDIA H100 80GB HBM3",
+            "capability": [9, 0],
+        },
+        raw_sample_count=1,
+        benchmark_enabled=False,
+        openrouter_generation_config=TEST_GEN_CONFIG,
+    ).to_dict()
+    assert manifest["gpu_architecture"] == "hopper-h100"
+    assert manifest["gpu_profile"]["family"] == "hopper"

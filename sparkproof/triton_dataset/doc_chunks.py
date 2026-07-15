@@ -8,6 +8,7 @@ import re
 import urllib.error
 import urllib.request
 
+from sparkproof.gpu.architecture import ARCH_BLACKWELL, fp4_supported, sm_label
 from sparkproof.policy import TRITON_VERSION
 
 _SYMBOL_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -454,13 +455,19 @@ def doc_kinds_for_sources(sources: frozenset[str]) -> frozenset[str]:
     return frozenset(kinds)
 
 
-def api_unit_chunks_from_registry() -> list[dict]:
+def api_unit_chunks_from_registry(gpu_architecture: str = ARCH_BLACKWELL) -> list[dict]:
+    gpu_label = sm_label(gpu_architecture)
+    fp8_desc = (
+        "tl.float8e4nv / tl.float8e5m2 and fp4 tl.float4e2m1 where applicable."
+        if fp4_supported(gpu_architecture)
+        else "tl.float8e4nv / tl.float8e5m2 where applicable (no native fp4 tensor cores on this target)."
+    )
     units = [
         ("tl.make_tensor_descriptor", "Tensor descriptors: desc.load/store offsets (replaces block_ptr in 3.7)."),
-        ("tl.dot", "tl.dot with fp32 acc and input_precision tf32/ieee on Blackwell."),
+        ("tl.dot", f"tl.dot with fp32 acc and input_precision tf32/ieee on {gpu_label}."),
         ("tl.associative_scan", "tl.associative_scan / tl.reduce / tl.cumsum patterns."),
         ("@triton.autotune", "@triton.autotune configs with num_warps, num_stages, BLOCK_* keys."),
-        ("fp8_dtypes", "tl.float8e4nv / tl.float8e5m2 and fp4 tl.float4e2m1 where applicable."),
+        ("fp8_dtypes", fp8_desc),
     ]
     return [
         {
@@ -481,10 +488,11 @@ def _task_id_from_section(section_id: str, *, prefix: str = "doc") -> str:
     return f"{prefix}_{section_id}"
 
 
-def prompt_from_api_chunk(chunk: dict) -> dict:
+def prompt_from_api_chunk(chunk: dict, gpu_architecture: str = ARCH_BLACKWELL) -> dict:
     target = chunk.get("target_api", "tl.dot")
     section_id = chunk["section_id"]
     ctx_limit = 4000 if chunk.get("api_page_enriched") else 1500
+    gpu_label = sm_label(gpu_architecture)
     return {
         "task_id": _task_id_from_section(section_id),
         "source": "api_doc",
@@ -492,18 +500,20 @@ def prompt_from_api_chunk(chunk: dict) -> dict:
         "target_api": target,
         "title": chunk.get("title", target),
         "prompt": (
-            f"Write a complete Triton 3.7.1 kernel on Blackwell SM12x that **must use** `{target}`.\n"
+            f"Write a complete Triton 3.7.1 kernel on {gpu_label} that **must use** `{target}`.\n"
             f"Define exact input shapes/dtypes, include @triton.jit, launcher, masks, and torch.allclose test.\n\n"
             f"Context:\n{chunk['content'][:ctx_limit]}"
         ),
         "doc_chunk_id": section_id,
+        "gpu_architecture": gpu_architecture,
     }
 
 
-def prompt_from_explain_chunk(chunk: dict) -> dict:
+def prompt_from_explain_chunk(chunk: dict, gpu_architecture: str = ARCH_BLACKWELL) -> dict:
     title = chunk.get("title", "Triton concept")
     section_id = chunk["section_id"]
     source = "doc_tutorial" if chunk.get("chunk_kind") == CHUNK_TUTORIAL else "doc_semantics"
+    gpu_label = sm_label(gpu_architecture)
     return {
         "task_id": _task_id_from_section(section_id),
         "source": source,
@@ -512,17 +522,18 @@ def prompt_from_explain_chunk(chunk: dict) -> dict:
         "prompt": (
             f"Read this Triton 3.7.1 documentation about **{title}**.\n\n"
             "1. Explain the key rules or ideas in 3-6 sentences.\n"
-            "2. Write a complete runnable Triton 3.7.1 kernel on Blackwell SM12x that demonstrates the concept.\n"
+            f"2. Write a complete runnable Triton 3.7.1 kernel on {gpu_label} that demonstrates the concept.\n"
             "Include @triton.jit, launcher, masks where needed, torch.allclose test, and "
             'print("SPARKPROOF_TRITON_PASS") after tests pass.\n\n'
             f"Documentation:\n{chunk['content'][:2500]}"
         ),
         "doc_chunk_id": section_id,
+        "gpu_architecture": gpu_architecture,
     }
 
 
-def prompt_from_doc_chunk(chunk: dict) -> dict:
+def prompt_from_doc_chunk(chunk: dict, gpu_architecture: str = ARCH_BLACKWELL) -> dict:
     kind = chunk.get("chunk_kind", CHUNK_API_SYMBOL)
     if kind == CHUNK_API_SYMBOL:
-        return prompt_from_api_chunk(chunk)
-    return prompt_from_explain_chunk(chunk)
+        return prompt_from_api_chunk(chunk, gpu_architecture=gpu_architecture)
+    return prompt_from_explain_chunk(chunk, gpu_architecture=gpu_architecture)

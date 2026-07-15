@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from sparkproof.gpu.architecture import SUPPORTED_ARCHITECTURES
 from sparkproof.hashing import (
     canonical_json_bytes,
     dataset_attestation_nonce,
@@ -58,8 +59,11 @@ def verify_manifest_policy(manifest: dict[str, Any]) -> list[str]:
         if manifest.get("dataset_kind") != "triton-3.7.1-blackwell":
             issues.append(f"unexpected dataset_kind: {manifest.get('dataset_kind')!r}")
         gpu = manifest.get("gpu_profile") or {}
-        if gpu.get("family") != "blackwell":
-            issues.append("gpu_profile.family must be blackwell")
+        gpu_architecture = manifest.get("gpu_architecture") or gpu.get("gpu_architecture")
+        if gpu_architecture not in SUPPORTED_ARCHITECTURES:
+            issues.append(
+                f"gpu_architecture must be one of {sorted(SUPPORTED_ARCHITECTURES)!r}, got {gpu_architecture!r}"
+            )
     issues.extend(verify_generation_config(manifest))
     return issues
 
