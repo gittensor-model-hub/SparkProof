@@ -9,12 +9,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-- **Architecture-scoped exact dedupe:** the same prompt text on different
-  `gpu_architecture` buckets (e.g. Blackwell vs Hopper) is now treated as a fresh row,
-  not an exact duplicate. Exact prompt/code fingerprints are keyed as
-  `{gpu_architecture}:{hash}`; near-semantic dedupe was already architecture-aware.
-
 ## [0.1.1] — 2026-07-15
 
 Hopper joins Blackwell for dataset generation, per-device NRAS tokens are
@@ -88,6 +82,14 @@ duplicates before publish — pairs with SparkDistill [#119](https://github.com/
   `gittensor-model-hub/sparkproof-mining` and passes the verified snapshot to the release
   gate (alternative to manual `--registry-snapshot`).
 - **`docs/MINER_GUIDE.md`** — dataset-track workflow including registry dedupe prevention.
+
+### Fixed
+
+- **Architecture-scoped exact dedupe** ([#26]): exact prompt/code fingerprints are keyed as
+  `{gpu_architecture}:{hash}`. The same prompt on Blackwell vs Hopper is a fresh row, not
+  an exact duplicate. Near-semantic dedupe was already architecture-aware via
+  `semantic_task_fingerprint`. Pairs with SparkDistill [#133](https://github.com/gittensor-model-hub/SparkDistill/pull/133)
+  and the republished `sparkproof-mining` canonical mix (174→178 rows).
 
 ---
 
