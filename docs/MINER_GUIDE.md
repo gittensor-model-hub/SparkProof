@@ -102,6 +102,11 @@ rows that will not earn credit.
 **Architecture-aware dedupe:** the same prompt on **Blackwell vs Hopper** counts as a
 **fresh** row, not a duplicate — exact dedupe keys include `gpu_architecture`.
 
+**Repair-tier novelty:** post-generation dedupe and `novelty_report.json` fingerprint
+`metadata.prompt_meta.prompt` (the mining task), not the shared self-repair wrapper stored
+in top-level `prompt`. Pre-generation filters already use task prompts — counts should
+match after a successful run.
+
 ### Pre-generation filtering (optional)
 
 Download `accepted_task_ids.json` from the mining HF repo and filter prompts before
