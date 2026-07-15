@@ -12,7 +12,7 @@ from sparkproof.policy import (
     validate_openrouter_trajectory,
 )
 from sparkproof.hashing import canonical_json_bytes, dataset_attestation_nonce, sha256_hex
-from sparkproof.verify import verify_bundle, verify_gpu_attestation, verify_manifest_policy
+from sparkproof.verify import verify_bundle, verify_gpu_attestation, verify_manifest_policy, verify_tdx_attestation
 from tests.conftest_helpers import TEST_GEN_CONFIG, make_trajectory
 
 
@@ -100,6 +100,38 @@ def _sparkproof2_manifest(**overrides):
     }
     base.update(overrides)
     return base
+
+
+def test_verify_tdx_attestation_grandfathers_legacy_without_tdx_key(tmp_path: Path):
+    (tmp_path / "gpu_attestation.json").write_text(json.dumps({"passed": True, "nonce": "a" * 64}))
+    assert verify_tdx_attestation(tmp_path, production=True) == []
+
+
+def test_verify_tdx_attestation_rejects_explicit_null_tdx(tmp_path: Path):
+    (tmp_path / "gpu_attestation.json").write_text(
+        json.dumps({"passed": True, "nonce": "a" * 64, "tdx": None})
+    )
+    issues = verify_tdx_attestation(tmp_path, production=True)
+    assert any("tdx required" in issue for issue in issues)
+
+
+def test_verify_tdx_attestation_accepts_bound_quote(tmp_path: Path):
+    from sparkproof.gpu.tdx import tdx_report_data
+
+    nonce = "b" * 64
+    (tmp_path / "gpu_attestation.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "nonce": nonce,
+                "tdx": {
+                    "quote_b64": "AAAA",
+                    "report_data": tdx_report_data(nonce).hex(),
+                },
+            }
+        )
+    )
+    assert verify_tdx_attestation(tmp_path, production=True) == []
 
 
 def test_verify_manifest_policy_accepts_blackwell():
