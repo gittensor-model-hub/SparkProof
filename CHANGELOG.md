@@ -7,6 +7,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+---
+
+## [Unreleased] — Intel TDX for dataset bundles (PR #22)
+
+Closes the userland trust gap on the dataset track: GPU CC attestation proved the GPU,
+not the measured VM running SparkProof validation.
+
+### Added
+
+- **`sparkproof/gpu/tdx.py`** — capture Intel TDX quotes via configfs-tsm; `report_data`
+  bound to the dataset attestation nonce (`dataset_attestation_nonce`).
+- **Production verification** — `verify_tdx_attestation()` requires `gpu_attestation.tdx`
+  with matching `report_data` and `quote_b64` on new bundles.
+- **Online verification** — `verify_tdx_attestation_signature()` DCAP-verifies the quote
+  via `dcap-qvl` when `sparkproof-verify --online` runs (`tdx_signature_checked` in report).
+- **`dcap-qvl`** added to `gpu` and `dev` optional extras.
+
+### Changed
+
+- **`attest_blackwell_gpu()`** — captures TDX when a dataset nonce is supplied; attestation
+  fails if TDX is unavailable (`"tdx": null`) on nonce-bound production runs.
+- **`gpu_attestation.json`** — includes `tdx` field on new bundles.
+
+### Security
+
+| Threat | Before (#22) | After (#22) |
+|---|---|---|
+| Patched SparkProof userland with valid NRAS GPU token | Possible — GPU attestation does not measure VM | **Blocked** — TDX quote binds measured guest to dataset nonce |
+| Legacy bundles without `tdx` key | N/A | Grandfathered until republished |
+
+### Miner setup (once per boot on TDX guest)
+
+```bash
+sudo chmod 0777 /sys/kernel/config/tsm/report
+mkdir /sys/kernel/config/tsm/report/sparkproof
+sudo chmod 0666 /sys/kernel/config/tsm/report/sparkproof/inblob
+export SPARKPROOF_TSM_REPORT_PATH=/sys/kernel/config/tsm/report/sparkproof
+```
+
+Pairs with SparkDistill [#122](https://github.com/gittensor-model-hub/SparkDistill/pull/122)
+(registry gate `eval.dataset_verify` TDX check).
+
+---
+
 ## [Unreleased] — online trust anchors (PR #17)
 
 Closes the remaining gap where a miner could fabricate `gpu_attestation.json` or replay an attestation token from another bundle. Offline verification proves internal consistency; online verification anchors the bundle to NVIDIA's and (optionally) OpenRouter's external roots of trust.
