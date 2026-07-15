@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Architecture-scoped exact dedupe:** the same prompt text on different
+  `gpu_architecture` buckets (e.g. Blackwell vs Hopper) is now treated as a fresh row,
+  not an exact duplicate. Exact prompt/code fingerprints are keyed as
+  `{gpu_architecture}:{hash}`; near-semantic dedupe was already architecture-aware.
+
 ## [0.1.1] — 2026-07-15
 
 Hopper joins Blackwell for dataset generation, per-device NRAS tokens are

@@ -99,6 +99,9 @@ Target **`novel_verified_rows` ≥ 25** (`dataset:xs` threshold) before opening 
 SparkDistill labels from canonical-mix contribution, but this preview avoids wasted GPU on
 rows that will not earn credit.
 
+**Architecture-aware dedupe:** the same prompt on **Blackwell vs Hopper** counts as a
+**fresh** row, not a duplicate — exact dedupe keys include `gpu_architecture`.
+
 ### Pre-generation filtering (optional)
 
 Download `accepted_task_ids.json` from the mining HF repo and filter prompts before

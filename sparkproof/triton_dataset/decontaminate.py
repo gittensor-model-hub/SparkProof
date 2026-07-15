@@ -51,6 +51,18 @@ def text_fingerprint(text: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
+def row_gpu_architecture(task_or_row: dict[str, Any]) -> str:
+    """Architecture label for dataset dedupe. Defaults to blackwell for legacy rows."""
+    meta = task_or_row
+    if "metadata" in task_or_row:
+        meta = (task_or_row.get("metadata") or {}).get("prompt_meta") or task_or_row
+    return str(
+        task_or_row.get("gpu_architecture")
+        or meta.get("gpu_architecture")
+        or "blackwell"
+    )
+
+
 def semantic_task_fingerprint(task: dict[str, Any]) -> str:
     """Normalized metadata fingerprint for near-duplicate task detection.
 
