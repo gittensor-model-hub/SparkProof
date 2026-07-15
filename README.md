@@ -117,8 +117,28 @@ Multi-candidate uses **yunwu/openrouter** gateways (Fable 5 + GPT 5.6 xhigh), no
 `sparkproof-publish-dataset` uploads the dataset rows **and** the bundle's proof
 artifacts (`manifest.json`, `dataset_manifest.json`, `gpu_attestation.json`,
 `trajectories.jsonl`, ...) under `proof/` in the same HF repo. That is what lets a
-SparkDistill validator re-verify everything from the HF link alone. To get the dataset
-rewarded (`dataset:xs/s/m/l/xl`), open a text-only PR appending your HF URL and
+SparkDistill validator re-verify everything from the HF link alone.
+
+**Avoid registry dedupe surprises:** SparkDistill publishes
+`accepted_registry_snapshot.jsonl` on the canonical mining repo
+(`gittensor-model-hub/sparkproof-mining`) and pins
+`accepted_registry_snapshot_sha256` in `mix_manifest.json`. Pass that snapshot to
+the release gate so `novelty_report.json` counts cross-registry duplicates before
+you spend GPU time:
+
+```bash
+# download + verify the pinned snapshot (needs: uv sync --extra publish)
+scripts/download_registry_snapshot.sh --out-dir ./snapshots
+
+sparkproof-publish-dataset --bundle bundles/run-001 --repo-id your-org/dataset \
+  --release-gate --registry-snapshot ./snapshots/accepted_registry_snapshot.jsonl
+
+# or let publish download + verify from the canonical mining repo directly:
+sparkproof-publish-dataset --bundle bundles/run-001 --repo-id your-org/dataset \
+  --release-gate --mining-repo
+```
+
+To get the dataset rewarded (`dataset:xs/s/m/l/xl`), open a text-only PR appending your HF URL and
 `trajectories_sha256` to SparkDistill's `datasets/registry.jsonl` — see
 `SparkDistill/datasets/README.md`.
 

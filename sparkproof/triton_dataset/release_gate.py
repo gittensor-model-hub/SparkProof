@@ -31,9 +31,10 @@ def _load_registry_snapshot(path: Path | None) -> NoveltyRegistry:
     """Load a pinned accepted-fingerprint snapshot. Empty (no prior art) if none given.
 
     Comparing against the full cross-run accepted registry is the validator's
-    job (SparkDistill owns that snapshot); this only lets a caller feed one in
-    locally. Without it, novelty accounting still catches duplicates *within*
-    this bundle via `compute_novelty_report`'s intra-bundle growth.
+    job; miners should pass SparkDistill's pinned
+    ``accepted_registry_snapshot.jsonl`` (see ``registry_snapshot.py`` /
+    ``sparkproof-download-registry-snapshot``) so novelty accounting catches
+    registry duplicates before publish.
     """
     if path is None:
         return NoveltyRegistry()

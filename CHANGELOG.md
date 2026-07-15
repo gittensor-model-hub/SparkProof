@@ -64,7 +64,17 @@ Pairs with SparkDistill [#122](https://github.com/gittensor-model-hub/SparkDisti
 
 ---
 
-## [Unreleased] — online trust anchors (PR #17, shipped in v0.1.0)
+## [Unreleased]
+
+### Added
+- **Accepted-registry snapshot download for miners** ([#TBD]): `registry_snapshot.py` +
+  `sparkproof-download-registry-snapshot` download
+  `accepted_registry_snapshot.jsonl` from the canonical mining HF repo and verify
+  `mix_manifest` sha256 pins before publish. `sparkproof-publish-dataset` gains
+  `--mining-repo` (bare flag → `gittensor-model-hub/sparkproof-mining`) to auto-fetch
+  the snapshot for release-gate novelty checks — pairs with SparkDistill [#119].
+
+---
 
 Closes the remaining gap where a miner could fabricate `gpu_attestation.json` or replay an attestation token from another bundle. Offline verification proves internal consistency; online verification anchors the bundle to NVIDIA's and (optionally) OpenRouter's external roots of trust.
 
