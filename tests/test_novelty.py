@@ -89,6 +89,31 @@ def test_compute_novelty_report_does_not_mutate_the_input_registry():
     assert report.exact_duplicate_rows == 0
 
 
+def test_same_prompt_different_gpu_architecture_is_novel():
+    accepted = [_row("a1", "Write a relu kernel", "print(1)", "relu", gpu_architecture="blackwell")]
+    registry = NoveltyRegistry.from_rows(accepted)
+
+    report = compute_novelty_report(
+        [_row("b1", "Write a relu kernel", "print(1)", "relu", gpu_architecture="hopper-h100")],
+        registry,
+    )
+    assert report.novel_verified_rows == 1
+    assert report.exact_duplicate_rows == 0
+    assert report.near_duplicate_rows == 0
+
+
+def test_same_prompt_same_gpu_architecture_remains_exact_duplicate():
+    accepted = [_row("a1", "Write a relu kernel", "print(1)", "relu", gpu_architecture="blackwell")]
+    registry = NoveltyRegistry.from_rows(accepted)
+
+    report = compute_novelty_report(
+        [_row("b1", "Write a relu kernel", "print(2)", "relu", gpu_architecture="blackwell")],
+        registry,
+    )
+    assert report.exact_duplicate_rows == 1
+    assert report.novel_verified_rows == 0
+
+
 def test_fingerprint_row_ignores_absent_response():
     fp = fingerprint_row({"task_id": "p1", "prompt": "Write a kernel", "metadata": {"prompt_meta": {"category": "relu"}}})
     assert fp.assistant_ast_hash is None
