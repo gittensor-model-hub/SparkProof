@@ -7,37 +7,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
----
+## [Unreleased]
 
-## [Unreleased] — Intel TDX for dataset bundles (PR #22)
+## [0.1.1] — 2026-07-15
 
-Closes the userland trust gap on the dataset track: GPU CC attestation proved the GPU,
-not the measured VM running SparkProof validation.
+Hopper joins Blackwell for dataset generation, per-device NRAS tokens are
+cryptographically verified, OpenRouter ledger checks accept dated build suffixes,
+and Intel TDX closes the userland trust gap on the dataset track.
+
+`generator_version` in new bundles remains **0.3.0** (package release `0.1.1`).
 
 ### Added
 
-- **`sparkproof/gpu/tdx.py`** — capture Intel TDX quotes via configfs-tsm; `report_data`
-  bound to the dataset attestation nonce (`dataset_attestation_nonce`).
-- **Production verification** — `verify_tdx_attestation()` requires `gpu_attestation.tdx`
-  with matching `report_data` and `quote_b64` on new bundles.
-- **Online verification** — `verify_tdx_attestation_signature()` DCAP-verifies the quote
-  via `dcap-qvl` when `sparkproof-verify --online` runs (`tdx_signature_checked` in report).
-- **`dcap-qvl`** added to `gpu` and `dev` optional extras.
+- **Per-device NRAS JWKS verification** ([#18]): `verify_nras_token` now
+  signature-verifies every GPU device JWT in `REMOTE_GPU_CLAIMS` (not just the
+  platform token). Signed `hwmodel` / driver claims are exposed under
+  `claims["devices"]` — hardware corroboration no longer trusts unsigned JSON.
+- **Hopper H100/H200 dataset generation** ([#20]): `sparkproof/gpu/architecture.py`
+  accepts Blackwell (SM10x/12x) or Hopper H100/H200 (SM90, memory-size split).
+  Prompt templates, doc chunks, mutation/failure-mining/self-evolution text, API-unit
+  registry (Hopper excludes FP4), decontamination fingerprints, and
+  `dataset_manifest.json` are architecture-aware.
+- **Intel TDX measured-VM attestation** ([#22]): `sparkproof/gpu/tdx.py` captures
+  Intel TDX quotes via configfs-tsm with `report_data` bound to the dataset
+  attestation nonce. Production `sparkproof-verify` requires `gpu_attestation.tdx`
+  on new bundles; `--online` DCAP-verifies via `dcap-qvl` (`tdx_signature_checked`).
+  Legacy bundles without a `tdx` key are grandfathered.
 
 ### Changed
 
-- **`attest_blackwell_gpu()`** — captures TDX when a dataset nonce is supplied; attestation
-  fails if TDX is unavailable (`"tdx": null`) on nonce-bound production runs.
-- **`gpu_attestation.json`** — includes `tdx` field on new bundles.
+- **OpenRouter response model recording** ([#19]): trajectories store OpenRouter's
+  actual `payload.model` in `gateway_model`; pinned request slug kept in
+  `metadata.openrouter_requested_model`. Dated build suffixes (e.g.
+  `gpt-5.6-sol-20260709`) accepted in policy and online ledger checks.
+- **Legacy `gpu_architecture` fallback** ([#21]): pre-Hopper bundles missing
+  `gpu_architecture` default to `"blackwell"` when `gpu_profile.family == "blackwell"`.
 
 ### Security
 
-| Threat | Before (#22) | After (#22) |
+| Threat | Before | After |
 |---|---|---|
-| Patched SparkProof userland with valid NRAS GPU token | Possible — GPU attestation does not measure VM | **Blocked** — TDX quote binds measured guest to dataset nonce |
-| Legacy bundles without `tdx` key | N/A | Grandfathered until republished |
+| Unsigned per-device GPU claims in attestation JSON | Possible | **Blocked** — device JWTs JWKS-verified ([#18]) |
+| Patched userland + valid NRAS GPU token | Possible | **Blocked** — TDX quote binds measured guest ([#22]) |
+| OpenRouter dated slug vs pinned request model | `--online` false reject | **Accepted** when ledger matches ([#19]) |
 
-### Miner setup (once per boot on TDX guest)
+### Miner setup (TDX guest, once per boot)
 
 ```bash
 sudo chmod 0777 /sys/kernel/config/tsm/report
@@ -46,12 +60,11 @@ sudo chmod 0666 /sys/kernel/config/tsm/report/sparkproof/inblob
 export SPARKPROOF_TSM_REPORT_PATH=/sys/kernel/config/tsm/report/sparkproof
 ```
 
-Pairs with SparkDistill [#122](https://github.com/gittensor-model-hub/SparkDistill/pull/122)
-(registry gate `eval.dataset_verify` TDX check).
+Pairs with SparkDistill [#122](https://github.com/gittensor-model-hub/SparkDistill/pull/122).
 
 ---
 
-## [Unreleased] — online trust anchors (PR #17)
+## [Unreleased] — online trust anchors (PR #17, shipped in v0.1.0)
 
 Closes the remaining gap where a miner could fabricate `gpu_attestation.json` or replay an attestation token from another bundle. Offline verification proves internal consistency; online verification anchors the bundle to NVIDIA's and (optionally) OpenRouter's external roots of trust.
 
@@ -297,4 +310,10 @@ Old slugs (`claude-sonnet-5`, `gpt-5-mini`) are rejected at startup.
 
 ### GPU test runners
 
-Set `SPARKPROOF_RUN_GPU_TESTS=1` on a Blackwell runner. Triton JIT requires `Python.h` — use uv-managed CPython (`uv python install 3.12`) if system `python3-dev` is unavailable.
+Set `SPARKPROOF_RUN_GPU_TESTS=1` on a Blackwell or Hopper runner. Triton JIT requires `Python.h` — use uv-managed CPython (`uv python install 3.12`) if system `python3-dev` is unavailable.
+
+---
+
+[Unreleased]: https://github.com/gittensor-model-hub/SparkProof/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.1
+[0.1.0]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.0
