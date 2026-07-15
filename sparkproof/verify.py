@@ -60,6 +60,11 @@ def verify_manifest_policy(manifest: dict[str, Any]) -> list[str]:
             issues.append(f"unexpected dataset_kind: {manifest.get('dataset_kind')!r}")
         gpu = manifest.get("gpu_profile") or {}
         gpu_architecture = manifest.get("gpu_architecture") or gpu.get("gpu_architecture")
+        if gpu_architecture is None and gpu.get("family") == "blackwell":
+            # Legacy manifest predating the gpu_architecture field (before Hopper
+            # support existed, every accepted bundle was Blackwell) — the older
+            # "family" field is still evidence enough to default, not reject.
+            gpu_architecture = "blackwell"
         if gpu_architecture not in SUPPORTED_ARCHITECTURES:
             issues.append(
                 f"gpu_architecture must be one of {sorted(SUPPORTED_ARCHITECTURES)!r}, got {gpu_architecture!r}"
