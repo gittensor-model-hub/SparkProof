@@ -28,6 +28,11 @@ def _collect_environment() -> dict[str, str]:
         import torch
 
         if torch.cuda.is_available():
+            # Report the GPU actually running this eval rather than assuming
+            # Blackwell — TritonBench itself still gates on Blackwell only
+            # (see SparkDistill/tritonbench/bench_config.py); this is just the
+            # environment record attached to the eval report.
+            env["gpu"] = torch.cuda.get_device_name(0)
             env["compute_capability"] = f"{torch.cuda.get_device_capability(0)[0]}.{torch.cuda.get_device_capability(0)[1]}"
             env["cuda"] = torch.version.cuda or "unknown"
         env["pytorch"] = torch.__version__

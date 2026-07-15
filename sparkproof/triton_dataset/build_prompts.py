@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 from typing import Any, Iterable, Iterator
 
+from sparkproof.gpu.architecture import ARCH_BLACKWELL, sm_label
 from sparkproof.triton_dataset.doc_chunks import (
     CHUNK_API_SYMBOL,
     api_unit_chunks_from_registry,
@@ -26,11 +27,15 @@ from sparkproof.triton_dataset.task_policy import normalize_train_task
 from sparkproof.triton_dataset.mutator import iter_mutation_prompts
 from sparkproof.triton_dataset.torch_ops import iter_torch_translation_prompts
 
-DEFAULT_SYSTEM = (
-    "You are a Triton 3.7.1 GPU kernel expert for Blackwell SM12x. "
-    "Write complete runnable Python with @triton.jit, launcher, and torch.allclose test. "
-    "Always end with print(\"SPARKPROOF_TRITON_PASS\") after tests pass."
-)
+def default_system(gpu_architecture: str = ARCH_BLACKWELL) -> str:
+    return (
+        f"You are a Triton 3.7.1 GPU kernel expert for {sm_label(gpu_architecture)}. "
+        "Write complete runnable Python with @triton.jit, launcher, and torch.allclose test. "
+        "Always end with print(\"SPARKPROOF_TRITON_PASS\") after tests pass."
+    )
+
+
+DEFAULT_SYSTEM = default_system(ARCH_BLACKWELL)
 
 # TritonBench YAML is eval-only — never include "yaml" in training sources.
 
@@ -46,10 +51,10 @@ DEFAULT_TRAIN_SOURCES = frozenset(
 DEFAULT_TRAIN_SOURCES_STR = "api_doc,doc_semantics,doc_tutorial,mutation,torch_op"
 
 
-def _finalize(record: dict[str, Any]) -> dict[str, Any]:
+def _finalize(record: dict[str, Any], *, gpu_architecture: str = ARCH_BLACKWELL) -> dict[str, Any]:
     out = {
         "prompt": record["prompt"],
-        "system": record.get("system", DEFAULT_SYSTEM),
+        "system": record.get("system", default_system(gpu_architecture)),
     }
     for key in (
         "task_id",
@@ -74,11 +79,13 @@ def _finalize(record: dict[str, Any]) -> dict[str, Any]:
         "captured_failure_class",
         "parent_id",
         "evolution_ops",
+        "gpu_architecture",
     ):
         if key in record and record[key] is not None:
             out[key] = record[key]
     out.setdefault("origin", out.get("source", "unknown"))
     out.setdefault("split", "train")
+    out.setdefault("gpu_architecture", gpu_architecture)
     if out.get("torch_reference") and not out.get("reference_expr"):
         out["reference_expr"] = out["torch_reference"]
     return normalize_train_task(out)
@@ -97,8 +104,9 @@ def _yield_if_matches(
     *,
     filter_sources: frozenset[str] | None,
     filter_task_ids: frozenset[str] | None,
+    gpu_architecture: str = ARCH_BLACKWELL,
 ) -> dict[str, Any] | None:
-    finalized = _finalize(record)
+    finalized = _finalize(record, gpu_architecture=gpu_architecture)
     if not prompt_matches_filters(finalized, sources=filter_sources, task_ids=filter_task_ids):
         return None
     return finalized
@@ -117,6 +125,7 @@ def iter_all_prompts(
     apply_templates: bool = False,
     torch_shape_variants: bool = False,
     gpu_index: int = 0,
+    gpu_architecture: str = ARCH_BLACKWELL,
     filter_sources: frozenset[str] | None = None,
     filter_task_ids: frozenset[str] | None = None,
 ) -> Iterator[dict[str, Any]]:
@@ -125,12 +134,17 @@ def iter_all_prompts(
     Selecting a subset (e.g. for `--limit`) is `build_prompts_file`'s job via
     stratified sampling — this function only decides *eligibility* (sources,
     filters), never *how many*, so callers always see the complete catalog to
-    sample from.
+    sample from. `gpu_architecture` decides the SM/GPU label baked into prompt
+    text (see `sparkproof.gpu.architecture`); it does not need to match
+    `gpu_index`'s actual hardware except where `capture_mutation_errors=True`
+    actually executes kernels, which stamps the real detected architecture.
     """
     sources = include_sources or DEFAULT_TRAIN_SOURCES
 
     def emit(record: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        out = _yield_if_matches(record, filter_sources=filter_sources, filter_task_ids=filter_task_ids)
+        out = _yield_if_matches(
+            record, filter_sources=filter_sources, filter_task_ids=filter_task_ids, gpu_architecture=gpu_architecture
+        )
         if out is not None:
             yield out
 
@@ -167,30 +181,32 @@ def iter_all_prompts(
                     "provide --doc-dir/cache or explicitly allow partial docs"
                 )
         if not chunks and CHUNK_API_SYMBOL in doc_kinds:
-            chunks = api_unit_chunks_from_registry()
+            chunks = api_unit_chunks_from_registry(gpu_architecture=gpu_architecture)
         for chunk in chunks:
-            rec = prompt_from_doc_chunk(chunk)
+            rec = prompt_from_doc_chunk(chunk, gpu_architecture=gpu_architecture)
             rec.setdefault("origin", rec.get("source", "api_doc"))
             if apply_templates:
-                rec = apply_prompt_template(rec)
+                rec = apply_prompt_template(rec, gpu_architecture=gpu_architecture)
             yield from emit(rec)
 
     if "mutation" in sources:
         for name, code in REFERENCE_KERNELS.items():
-            for rec in iter_mutation_prompts(task_id=name, valid_kernel=code):
+            for rec in iter_mutation_prompts(task_id=name, valid_kernel=code, gpu_architecture=gpu_architecture):
                 rec.setdefault("origin", "mutation")
                 rec.setdefault("ground_truth_code", code)
                 if capture_mutation_errors:
                     rec = enrich_mutation_prompt(rec, gpu_index=gpu_index)
                 if apply_templates:
-                    rec = apply_prompt_template(rec)
+                    rec = apply_prompt_template(rec, gpu_architecture=gpu_architecture)
                 yield from emit(rec)
 
     if "torch_op" in sources:
-        for rec in iter_torch_translation_prompts(include_shape_variants=torch_shape_variants):
+        for rec in iter_torch_translation_prompts(
+            include_shape_variants=torch_shape_variants, gpu_architecture=gpu_architecture
+        ):
             rec.setdefault("origin", "torch_op")
             if apply_templates:
-                rec = apply_prompt_template(rec)
+                rec = apply_prompt_template(rec, gpu_architecture=gpu_architecture)
             yield from emit(rec)
 
     if "failure_mining" in sources and mined_prompts_path and mined_prompts_path.exists():
@@ -255,6 +271,7 @@ def build_prompts_file(
     assign_dev_splits: bool = False,
     dev_fraction: float = 0.1,
     gpu_index: int = 0,
+    gpu_architecture: str = ARCH_BLACKWELL,
     filter_sources: frozenset[str] | None = None,
     filter_task_ids: frozenset[str] | None = None,
     run_seed: str | None = None,
@@ -265,7 +282,10 @@ def build_prompts_file(
     `run_seed`, and write it out. Sampling provenance (policy, run_seed,
     catalog_sha256, bucket_counts) is written alongside as
     `<out_path>.sampling.json` — auto-generating and persisting `run_seed`
-    when omitted so the exact run can be replayed later.
+    when omitted so the exact run can be replayed later. `gpu_architecture`
+    (default Blackwell) selects the SM/GPU label baked into prompt text; pass
+    the value from `require_supported_gpu`'s detected profile to match
+    prompts to whatever hardware will validate them.
     """
     from sparkproof.triton_dataset.dataset_split import assign_splits
 
@@ -282,6 +302,7 @@ def build_prompts_file(
             apply_templates=apply_templates,
             torch_shape_variants=torch_shape_variants,
             gpu_index=gpu_index,
+            gpu_architecture=gpu_architecture,
             filter_sources=filter_sources,
             filter_task_ids=filter_task_ids,
         )
@@ -307,6 +328,7 @@ def build_prompts_file(
                 "requested_limit": limit,
                 "max_bucket_share": max_bucket_share,
                 "bucket_counts": bucket_counts,
+                "gpu_architecture": gpu_architecture,
             },
             indent=2,
             sort_keys=True,

@@ -10,7 +10,12 @@ from sparkproof.triton_dataset.doc_api_pages import api_page_html_url
 from sparkproof.triton_dataset.decontaminate import TritonDecontaminator, get_canonical_structure
 from sparkproof.triton_dataset.eval_problems import iter_eval_problem_prompts
 from sparkproof.triton_dataset.eval_harness import TritonBenchHarness
-from sparkproof.triton_dataset.failure_miner import FAILURE_TEMPLATES, classify_failure, mine_failure_to_tasks, record_failure
+from sparkproof.triton_dataset.failure_miner import (
+    classify_failure,
+    failure_template,
+    mine_failure_to_tasks,
+    record_failure,
+)
 from sparkproof.triton_dataset.mutator import build_mutation_prompt, strip_boundary_mask
 from sparkproof.triton_dataset.multi_candidate import acceptance_score, assign_tier
 from sparkproof.triton_dataset.orchestrate import run_dataset_generation_step
@@ -384,7 +389,7 @@ def test_mine_failure_to_tasks_falls_back_to_compile_error_template_for_unknown_
             "task_family": "matmul",
         }
     )
-    assert tasks[0]["prompt"].startswith(FAILURE_TEMPLATES["compile_error"].format(op="matmul")[:20])
+    assert tasks[0]["prompt"].startswith(failure_template("compile_error").format(op="matmul")[:20])
     assert tasks[0]["parent_failure_class"] == "not_a_real_class"
 
 

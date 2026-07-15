@@ -67,7 +67,7 @@ def _repair_prompt(broken_response: str, validation: dict[str, Any]) -> str:
             break
     fail = validation.get("fail_reason", "unknown")
     return (
-        "Your prior Triton 3.7.1 answer failed Blackwell validation.\n"
+        "Your prior Triton 3.7.1 answer failed hardware validation.\n"
         f"Failure: {fail}\n"
         f"Trace tail:\n{tail[-1500:]}\n\n"
         "Return corrected **complete runnable Python** (kernel + launcher + torch.allclose test).\n\n"

@@ -7,7 +7,7 @@ import re
 import secrets
 from typing import Any
 
-from sparkproof.blackwell.gpu import require_blackwell_gpu
+from sparkproof.gpu.architecture import require_supported_gpu
 from sparkproof.triton_dataset.adversarial_harness import run_adversarial_execution
 from sparkproof.triton_dataset.anti_cheat import analyze_anti_cheat
 from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
@@ -69,7 +69,7 @@ class TritonKernelValidator:
         *,
         monitor_benchmark: bool = False,
     ) -> tuple[bool, str]:
-        require_blackwell_gpu(self.gpu_index)
+        require_supported_gpu(self.gpu_index)
         benchmark_setup = ""
         benchmark_report = ""
         timing_nonce = secrets.token_hex(16)

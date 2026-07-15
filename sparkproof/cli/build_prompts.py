@@ -9,6 +9,7 @@ import json
 import sys
 from pathlib import Path
 
+from sparkproof.gpu.architecture import ARCH_BLACKWELL, SUPPORTED_ARCHITECTURES, require_supported_gpu
 from sparkproof.triton_dataset.build_prompts import (
     DEFAULT_TRAIN_SOURCES_STR,
     build_prompts_file,
@@ -84,6 +85,13 @@ def main(argv: list[str] | None = None) -> int:
         "sources still have supply (default: 0.25)",
     )
     parser.add_argument("--gpu", type=int, default=0, help="GPU index for mutation error capture")
+    parser.add_argument(
+        "--gpu-architecture",
+        choices=sorted(SUPPORTED_ARCHITECTURES),
+        default=None,
+        help="GPU/SM label baked into prompt text (default: auto-detect from --gpu's hardware, "
+        "falling back to blackwell if no supported GPU is present)",
+    )
     parser.add_argument("--mined-prompts", type=Path, default=None, help="failure-mined tasks jsonl")
     parser.add_argument("--evolved-prompts", type=Path, default=None, help="self-evolved tasks jsonl")
     parser.add_argument("--limit", type=int, default=None)
@@ -107,6 +115,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     sources = frozenset(s.strip() for s in args.sources.split(",") if s.strip())
+
+    gpu_architecture = args.gpu_architecture
+    if gpu_architecture is None:
+        try:
+            gpu_architecture = require_supported_gpu(args.gpu)["gpu_architecture"]
+        except RuntimeError:
+            gpu_architecture = ARCH_BLACKWELL
+
     count = build_prompts_file(
         args.out,
         doc_dir=args.doc_dir,
@@ -123,12 +139,14 @@ def main(argv: list[str] | None = None) -> int:
         assign_dev_splits=args.assign_dev_splits,
         dev_fraction=args.dev_fraction,
         gpu_index=args.gpu,
+        gpu_architecture=gpu_architecture,
         filter_sources=parse_filter_set(args.filter_sources),
         filter_task_ids=parse_filter_set(args.filter_task_ids),
         run_seed=args.run_seed,
         sampling_policy=args.sampling_policy,
         max_bucket_share=args.max_bucket_share,
     )
+    print(f"prompts targeted for gpu_architecture={gpu_architecture!r}", file=sys.stderr)
     sampling_report_path = args.out.with_suffix(".sampling.json")
     sampling_report = json.loads(sampling_report_path.read_text(encoding="utf-8"))
     if not args.run_seed:

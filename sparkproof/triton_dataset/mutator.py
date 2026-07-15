@@ -7,6 +7,7 @@ import hashlib
 import re
 from typing import Callable
 
+from sparkproof.gpu.architecture import ARCH_BLACKWELL, sm_label
 
 MutationFn = Callable[[str], tuple[str, str]]
 
@@ -108,6 +109,7 @@ def build_mutation_prompt(
     task_id: str,
     valid_kernel: str,
     mutator: MutationFn | None = None,
+    gpu_architecture: str = ARCH_BLACKWELL,
 ) -> dict:
     if mutator is not None:
         candidates = [mutator]
@@ -131,10 +133,11 @@ def build_mutation_prompt(
 
     fn, broken, reason = selected
     is_opt = fn is strip_autotune_and_stages
+    gpu_label = sm_label(gpu_architecture)
 
     if is_opt:
         user = (
-            "Optimize the following Triton 3.7.1 kernel for Blackwell SM12x. "
+            f"Optimize the following Triton 3.7.1 kernel for {gpu_label}. "
             "Add @triton.autotune, tune num_warps/num_stages, and ensure boundary masks.\n\n"
             f"```python\n{broken}\n```"
         )
@@ -157,10 +160,11 @@ def build_mutation_prompt(
         "ground_truth_code": valid_kernel,
         "mutation_reason": reason,
         "broken_code": broken,
+        "gpu_architecture": gpu_architecture,
     }
 
 
-def iter_mutation_prompts(*, task_id: str, valid_kernel: str) -> list[dict]:
+def iter_mutation_prompts(*, task_id: str, valid_kernel: str, gpu_architecture: str = ARCH_BLACKWELL) -> list[dict]:
     """Produce every applicable syntax-preserving mutation with stable task IDs."""
     prompts: list[dict] = []
     for fn in MUTATIONS:
@@ -170,6 +174,7 @@ def iter_mutation_prompts(*, task_id: str, valid_kernel: str) -> list[dict]:
                 task_id=variant_id,
                 valid_kernel=valid_kernel,
                 mutator=fn,
+                gpu_architecture=gpu_architecture,
             )
             prompt["task_family"] = task_id
             prompts.append(prompt)

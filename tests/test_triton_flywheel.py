@@ -18,7 +18,7 @@ from sparkproof.triton_dataset.benchmark_pairs import build_preference_pair, pre
 from sparkproof.triton_dataset.build_prompts import build_prompts_file
 from sparkproof.triton_dataset.dataset_split import assign_splits, split_group_key, summarize_splits
 from sparkproof.triton_dataset.dpo_export import enrich_adjudication_with_responses, export_dpo_jsonl
-from sparkproof.triton_dataset.error_capture import capture_execution_error
+from sparkproof.triton_dataset.error_capture import capture_execution_error, enrich_mutation_prompt
 from sparkproof.triton_dataset.ir_artifacts import capture_ir_artifacts
 from sparkproof.triton_dataset.multi_candidate import _client_value, acceptance_score, generate_best_of_n
 from sparkproof.triton_dataset.python_runner import PythonExecution
@@ -404,7 +404,7 @@ def test_benchmark_wrapper_monitors_real_do_bench_calls(monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr("sparkproof.triton.validator.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton.validator.require_supported_gpu", lambda gpu_index: None)
     monkeypatch.setattr("sparkproof.triton.validator.run_python_source", fake_run)
     validator = TritonKernelValidator()
     passed, output = validator.compile_and_execute(VALID_KERNEL, monitor_benchmark=True)
@@ -425,7 +425,7 @@ def test_benchmark_wrapper_strips_forged_last_timing_marker(monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr("sparkproof.triton.validator.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton.validator.require_supported_gpu", lambda gpu_index: None)
     monkeypatch.setattr("sparkproof.triton.validator.run_python_source", fake_run)
 
     validator = TritonKernelValidator()
@@ -461,7 +461,7 @@ def test_validate_response_records_untrusted_speedup_diagnostic(monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr("sparkproof.triton.validator.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton.validator.require_supported_gpu", lambda gpu_index: None)
     monkeypatch.setattr("sparkproof.triton.validator.run_python_source", fake_candidate_run)
     monkeypatch.setattr("sparkproof.triton_dataset.reference_bench.run_python_source", fake_reference_run)
 
@@ -493,7 +493,7 @@ def test_validate_response_omits_speedup_without_a_derivable_reference(monkeypat
             stderr="",
         )
 
-    monkeypatch.setattr("sparkproof.triton.validator.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr("sparkproof.triton.validator.require_supported_gpu", lambda gpu_index: None)
     monkeypatch.setattr("sparkproof.triton.validator.run_python_source", fake_run)
 
     validator = TritonKernelValidator()
@@ -540,7 +540,7 @@ def test_error_capture_fails_before_subprocess_without_blackwell(monkeypatch):
     def unavailable(_gpu_index):
         raise RuntimeError("Blackwell GPU required")
 
-    monkeypatch.setattr("sparkproof.triton_dataset.error_capture.require_blackwell_gpu", unavailable)
+    monkeypatch.setattr("sparkproof.triton_dataset.error_capture.require_supported_gpu", unavailable)
     with pytest.raises(RuntimeError, match="Blackwell GPU required"):
         capture_execution_error("print('SPARKPROOF_TRITON_PASS')")
 
@@ -549,7 +549,10 @@ def test_error_capture_classifies_timeout_as_runtime_error(monkeypatch):
     def fake_run(*args, **kwargs):
         return PythonExecution(returncode=-1, stdout="", stderr="TIMEOUT", timed_out=True)
 
-    monkeypatch.setattr("sparkproof.triton_dataset.error_capture.require_blackwell_gpu", lambda gpu_index: None)
+    monkeypatch.setattr(
+        "sparkproof.triton_dataset.error_capture.require_supported_gpu",
+        lambda gpu_index: {"gpu_architecture": "blackwell"},
+    )
     monkeypatch.setattr("sparkproof.triton_dataset.error_capture.run_python_source", fake_run)
     result = capture_execution_error("print('SPARKPROOF_TRITON_PASS')")
     assert result["passed"] is False
@@ -596,7 +599,7 @@ def test_proving_gate_reapplies_strict_validation(monkeypatch):
         def to_dict(self):
             return {"merkle_root": "root"}
 
-    monkeypatch.setattr("sparkproof.pipeline.blackwell.require_blackwell_gpu", lambda gpu_index: {"gpu": gpu_index})
+    monkeypatch.setattr("sparkproof.pipeline.blackwell.require_supported_gpu", lambda gpu_index: {"gpu": gpu_index})
     monkeypatch.setattr("sparkproof.pipeline.blackwell.TritonKernelValidator", FakeValidator)
     monkeypatch.setattr("sparkproof.pipeline.blackwell.build_manifest_v2", lambda *args, **kwargs: FakeManifest())
 
@@ -627,7 +630,7 @@ def test_proving_gate_does_not_downgrade_existing_strict_evidence(monkeypatch):
         def to_dict(self):
             return {"merkle_root": "root"}
 
-    monkeypatch.setattr("sparkproof.pipeline.blackwell.require_blackwell_gpu", lambda gpu_index: {})
+    monkeypatch.setattr("sparkproof.pipeline.blackwell.require_supported_gpu", lambda gpu_index: {})
     monkeypatch.setattr("sparkproof.pipeline.blackwell.TritonKernelValidator", FakeValidator)
     monkeypatch.setattr("sparkproof.pipeline.blackwell.build_manifest_v2", lambda *args, **kwargs: FakeManifest())
 
@@ -737,3 +740,31 @@ def test_build_prompts_file_limit_is_not_a_fixed_prefix_across_seeds(tmp_path):
         build_prompts_file(out, sources=frozenset({"mutation", "torch_op"}), limit=2, run_seed=seed)
         outs.append({json.loads(line)["task_id"] for line in out.read_text().splitlines() if line.strip()})
     assert len({frozenset(o) for o in outs}) > 1, "different run seeds should not all select the same 2 tasks"
+
+
+def test_capture_execution_error_stamps_detected_architecture(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return PythonExecution(returncode=1, stdout="SPARKPROOF_TRITON_FAIL: ValueError: bad mask", stderr="")
+
+    monkeypatch.setattr(
+        "sparkproof.triton_dataset.error_capture.require_supported_gpu",
+        lambda gpu_index: {"gpu_architecture": "hopper-h100"},
+    )
+    monkeypatch.setattr("sparkproof.triton_dataset.error_capture.run_python_source", fake_run)
+    result = capture_execution_error("print('x')")
+    assert result["gpu_architecture"] == "hopper-h100"
+
+
+def test_enrich_mutation_prompt_labels_hopper_validation_output(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return PythonExecution(returncode=1, stdout="SPARKPROOF_TRITON_FAIL: ValueError: bad mask", stderr="")
+
+    monkeypatch.setattr(
+        "sparkproof.triton_dataset.error_capture.require_supported_gpu",
+        lambda gpu_index: {"gpu_architecture": "hopper-h100"},
+    )
+    monkeypatch.setattr("sparkproof.triton_dataset.error_capture.run_python_source", fake_run)
+    prompt = {"prompt": "fix this", "category": "debugging", "broken_code": "bad code"}
+    enriched = enrich_mutation_prompt(prompt)
+    assert enriched["gpu_architecture"] == "hopper-h100"
+    assert "Observed Hopper SM90 validation output:" in enriched["prompt"]

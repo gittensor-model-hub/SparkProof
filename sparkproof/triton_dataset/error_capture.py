@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sparkproof.blackwell.gpu import require_blackwell_gpu
+from sparkproof.gpu.architecture import require_supported_gpu, sm_label
 from sparkproof.triton_dataset.failure_miner import classify_failure
 from sparkproof.triton_dataset.python_runner import run_python_source
 
@@ -17,7 +17,7 @@ def capture_execution_error(
 ) -> dict[str, Any]:
     # Fail the build clearly instead of recording "CUDA required" as if it were
     # a compiler/runtime defect in the mutated kernel.
-    require_blackwell_gpu(gpu_index)
+    gpu_profile = require_supported_gpu(gpu_index)
     wrapped = f"""
 import torch
 import triton
@@ -42,6 +42,7 @@ except Exception as e:
             "output_tail": "TIMEOUT",
             "failure_class": "runtime_error",
             "returncode": execution.returncode,
+            "gpu_architecture": gpu_profile["gpu_architecture"],
         }
     output = execution.output
     passed = "SPARKPROOF_TRITON_PASS" in execution.stdout and execution.returncode == 0
@@ -55,6 +56,7 @@ except Exception as e:
         "output_tail": output[-2500:],
         "failure_class": classify_failure(validation) if not passed else "pass",
         "returncode": execution.returncode,
+        "gpu_architecture": gpu_profile["gpu_architecture"],
     }
 
 
@@ -71,9 +73,10 @@ def enrich_mutation_prompt(prompt: dict[str, Any], *, gpu_index: int = 0) -> dic
     out = dict(prompt)
     out["captured_error"] = capture["output_tail"]
     out["captured_failure_class"] = capture["failure_class"]
+    out["gpu_architecture"] = capture["gpu_architecture"]
     out["prompt"] = (
         f"{prompt['prompt']}\n\n"
-        "Observed Blackwell validation output:\n"
+        f"Observed {sm_label(capture['gpu_architecture'])} validation output:\n"
         f"```text\n{capture['output_tail'][-1500:]}\n```"
     )
     return out

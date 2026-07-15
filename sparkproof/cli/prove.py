@@ -1,4 +1,4 @@
-"""Prove an existing SparkProof bundle on Blackwell (Triton validate + GPU CC)."""
+"""Prove an existing SparkProof bundle on Blackwell or Hopper H100/H200 (Triton validate + GPU CC)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ from sparkproof.pipeline.blackwell import prove_blackwell_bundle
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path, required=True, help="bundle directory with trajectories.jsonl")
-    parser.add_argument("--gpu", type=int, default=0, help="CUDA device index (must be Blackwell)")
+    parser.add_argument(
+        "--gpu", type=int, default=0, help="CUDA device index (must be Blackwell or Hopper H100/H200)"
+    )
     parser.add_argument("--benchmark", action="store_true", help="require lightweight benchmark score floor")
     parser.add_argument(
         "--strict-validate",
@@ -28,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-gpu-attest",
         action="store_true",
-        help="skip NVIDIA GPU CC attestation (Blackwell validation only — not valid for production PRs)",
+        help="skip NVIDIA GPU CC attestation (Triton validation only — not valid for production PRs)",
     )
     parser.add_argument(
         "--min-pass-rate",
@@ -48,7 +50,8 @@ def main(argv: list[str] | None = None) -> int:
         min_pass_rate=args.min_pass_rate,
     )
     print(json.dumps(report, indent=2), file=sys.stderr)
-    print(f"verified {report['verified_count']}/{report['raw_count']} on Blackwell", file=sys.stderr)
+    gpu_architecture = report["gpu_profile"].get("gpu_architecture", "blackwell")
+    print(f"verified {report['verified_count']}/{report['raw_count']} on {gpu_architecture}", file=sys.stderr)
     return 0
 
 

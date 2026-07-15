@@ -49,10 +49,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-blackwell",
         action="store_true",
-        help="skip Blackwell Triton validation (dev only — not valid for production)",
+        help="skip Triton validation (dev only — not valid for production)",
     )
-    parser.add_argument("--gpu", type=int, default=0, help="Blackwell CUDA device for validation")
-    parser.add_argument("--benchmark", action="store_true", help="require benchmark score floor on Blackwell")
+    parser.add_argument(
+        "--gpu", type=int, default=0, help="CUDA device for validation (Blackwell or Hopper H100/H200)"
+    )
+    parser.add_argument("--benchmark", action="store_true", help="require benchmark score floor during validation")
     parser.add_argument(
         "--no-gpu-attest",
         action="store_true",
@@ -94,8 +96,9 @@ def main(argv: list[str] | None = None) -> int:
             benchmark=args.benchmark,
             attest_gpu=not args.no_gpu_attest,
         )
+        gpu_architecture = report["gpu_profile"].get("gpu_architecture", "blackwell")
         print(
-            f"proved on Blackwell: {report['verified_count']}/{report['raw_count']} verified",
+            f"proved on {gpu_architecture}: {report['verified_count']}/{report['raw_count']} verified",
             file=sys.stderr,
         )
     return 0
