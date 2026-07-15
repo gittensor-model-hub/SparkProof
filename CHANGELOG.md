@@ -9,11 +9,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-07-15
+
+Architecture-scoped exact dedupe so the same prompt on Blackwell vs Hopper counts as a
+fresh row — pairs with SparkDistill [#133](https://github.com/gittensor-model-hub/SparkDistill/pull/133)
+and the republished `sparkproof-mining` canonical mix (174→178 rows).
+
+`generator_version` remains **0.3.0** (package release `0.1.3`).
+
 ### Fixed
-- **Architecture-scoped exact dedupe:** the same prompt text on different
-  `gpu_architecture` buckets (e.g. Blackwell vs Hopper) is now treated as a fresh row,
-  not an exact duplicate. Exact prompt/code fingerprints are keyed as
-  `{gpu_architecture}:{hash}`; near-semantic dedupe was already architecture-aware.
+
+- **Architecture-scoped exact dedupe** ([#26]): exact prompt/code fingerprints are keyed as
+  `{gpu_architecture}:{hash}`. Near-semantic dedupe was already architecture-aware via
+  `semantic_task_fingerprint`.
+
+---
 
 ## [0.1.1] — 2026-07-15
 
@@ -341,8 +351,8 @@ Set `SPARKPROOF_RUN_GPU_TESTS=1` on a Blackwell or Hopper runner. Triton JIT req
 
 ---
 
-[Unreleased]: https://github.com/gittensor-model-hub/SparkProof/compare/v0.1.1...HEAD
-[Unreleased]: https://github.com/gittensor-model-hub/SparkProof/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/gittensor-model-hub/SparkProof/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.3
 [0.1.2]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.2
 [0.1.1]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.1
 [0.1.0]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.0
