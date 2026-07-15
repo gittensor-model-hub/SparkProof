@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -78,7 +80,9 @@ def test_download_registry_snapshot_verifies_pins(tmp_path: Path, monkeypatch):
             return str(task_ids)
         raise AssertionError(filename)
 
-    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    fake_hub = types.ModuleType("huggingface_hub")
+    fake_hub.hf_hub_download = fake_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
 
     report = download_registry_snapshot(repo_id="org/mining", out_dir=tmp_path / "out")
     assert isinstance(report, RegistrySnapshotDownload)
