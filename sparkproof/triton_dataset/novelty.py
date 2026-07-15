@@ -51,11 +51,16 @@ class RowFingerprint:
 
 
 def fingerprint_row(row: dict[str, Any]) -> RowFingerprint:
-    """Fingerprint a prompt/trajectory row. Inputs only — never run/identity metadata."""
+    """Fingerprint a prompt/trajectory row. Inputs only — never run/identity metadata.
+
+    Uses ``metadata.prompt_meta.prompt`` (the mining task) when present so repair-tier
+    rows fingerprint the original task, not the shared self-repair wrapper in top-level
+    ``prompt``.
+    """
     meta = (row.get("metadata") or {}).get("prompt_meta") or row
     if "gpu_architecture" not in meta and row.get("gpu_architecture"):
         meta = {**meta, "gpu_architecture": row["gpu_architecture"]}
-    prompt = row.get("prompt") or meta.get("prompt") or ""
+    prompt = meta.get("prompt") or row.get("prompt") or ""
     reference_code = meta.get("ground_truth_code") or meta.get("broken_code") or ""
     assistant_code = extract_python_from_response(row["response"]) if row.get("response") else ""
 

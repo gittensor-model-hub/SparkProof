@@ -118,3 +118,55 @@ def test_fingerprint_row_ignores_absent_response():
     fp = fingerprint_row({"task_id": "p1", "prompt": "Write a kernel", "metadata": {"prompt_meta": {"category": "relu"}}})
     assert fp.assistant_ast_hash is None
     assert fp.prompt_hash
+
+
+_REPAIR_WRAPPER = (
+    "Your prior Triton 3.7.1 answer failed hardware validation.\n"
+    "Failure: triton_api\nTrace tail:\n\n"
+    "Return corrected **complete runnable Python** (kernel + launcher + torch.allclose test).\n\n"
+    "```python\npass\n```"
+)
+
+
+def _repair_row(task_id: str, task_prompt: str, response: str, category: str, **meta) -> dict:
+    return {
+        "task_id": task_id,
+        "prompt": _REPAIR_WRAPPER,
+        "response": f"```python\n{response}\n```",
+        "metadata": {
+            "tier": "repair",
+            "prompt_meta": {"task_id": task_id, "prompt": task_prompt, "category": category, **meta},
+        },
+    }
+
+
+def test_repair_tier_fingerprints_task_prompt_not_shared_wrapper():
+    accepted = [_repair_row("a1", "Implement translate_matmul for Hopper SM90", "print(1)", "matmul")]
+    registry = NoveltyRegistry.from_rows(accepted)
+
+    report = compute_novelty_report(
+        [_repair_row("b1", "Implement translate_relu for Hopper SM90", "print(2)", "relu")],
+        registry,
+    )
+    assert report.novel_verified_rows == 1
+    assert report.exact_duplicate_rows == 0
+
+
+def test_repair_tier_same_task_prompt_remains_exact_duplicate():
+    task_prompt = "Implement translate_matmul for Hopper SM90 with TMA descriptors"
+    accepted = [_repair_row("a1", task_prompt, "print(1)", "matmul")]
+    registry = NoveltyRegistry.from_rows(accepted)
+
+    report = compute_novelty_report(
+        [_repair_row("b1", task_prompt, "print(2)", "matmul")],
+        registry,
+    )
+    assert report.exact_duplicate_rows == 1
+    assert report.novel_verified_rows == 0
+
+
+def test_fingerprint_row_prefers_prompt_meta_over_repair_wrapper():
+    task_prompt = "Write a flash attention kernel for hopper"
+    repair_fp = fingerprint_row(_repair_row("t1", task_prompt, "print(1)", "attention"))
+    silver_fp = fingerprint_row(_row("t2", task_prompt, "print(2)", "attention"))
+    assert repair_fp.prompt_hash == silver_fp.prompt_hash

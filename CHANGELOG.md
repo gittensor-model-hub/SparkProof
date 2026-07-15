@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Repair-tier novelty fingerprint** ([#29]): `fingerprint_row()` now prefers
+  `metadata.prompt_meta.prompt` over top-level `prompt`, so repair rows fingerprint the
+  mining task instead of the shared self-repair wrapper. Fixes false exact duplicates and
+  pre-gen vs post-gen novelty mismatch on repair-heavy bundles.
+
 ## [0.1.1] — 2026-07-15
 
 Hopper joins Blackwell for dataset generation, per-device NRAS tokens are
