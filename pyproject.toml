@@ -19,6 +19,8 @@ blackwell = [
 ]
 gpu = [
     "nv-attestation-sdk==2.7.3",
+    # Validator-side Intel DCAP verification of TDX quotes (online verify).
+    "dcap-qvl==0.5.3",
 ]
 publish = [
     "datasets>=3.0.0",
@@ -27,6 +29,7 @@ publish = [
 dev = [
     "pytest>=9.0.0",
     "ruff>=0.15.0",
+    "dcap-qvl==0.5.3",
 ]
 
 [project.scripts]

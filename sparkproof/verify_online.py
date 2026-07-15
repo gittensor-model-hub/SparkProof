@@ -66,6 +66,34 @@ def verify_attestation_signature(
     return [f"nras: {issue}" for issue in result["issues"]]
 
 
+def verify_tdx_attestation_signature(bundle_dir: Path) -> list[str]:
+    """DCAP-verify the stored Intel TDX quote when present."""
+    path = bundle_dir / "gpu_attestation.json"
+    if not path.exists():
+        return []
+    att = json.loads(path.read_text())
+    if "tdx" not in att:
+        return []
+    tdx = att.get("tdx")
+    if not tdx:
+        return ["tdx: gpu_attestation.tdx required for production dataset bundles"]
+    quote_b64 = tdx.get("quote_b64") or ""
+    if not quote_b64:
+        return ["tdx: missing quote_b64"]
+
+    from sparkproof.gpu.tdx import verify_tdx_quote
+
+    result = verify_tdx_quote(quote_b64)
+    if not result.get("verified"):
+        status = result.get("status") or "unknown"
+        advisories = result.get("advisory_ids") or []
+        detail = f"status={status!r}"
+        if advisories:
+            detail += f" advisories={advisories}"
+        return [f"tdx: Intel DCAP verification failed ({detail})"]
+    return []
+
+
 def _default_fetch_generation(generation_id: str, api_key: str) -> dict[str, Any]:
     req = urllib.request.Request(
         f"{OPENROUTER_GENERATION_URL}?id={generation_id}",
@@ -138,6 +166,7 @@ def verify_bundle_online(
     """Run all available online trust-anchor checks for a bundle."""
     manifest = json.loads((bundle_dir / "manifest.json").read_text())
     issues = verify_attestation_signature(bundle_dir, manifest, jwk_client=jwk_client)
+    issues.extend(verify_tdx_attestation_signature(bundle_dir))
 
     generation_checked = False
     if openrouter_api_key:
@@ -155,5 +184,6 @@ def verify_bundle_online(
         "verified": not issues,
         "issues": issues,
         "nras_signature_checked": True,
+        "tdx_signature_checked": True,
         "openrouter_ledger_checked": generation_checked,
     }

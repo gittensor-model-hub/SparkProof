@@ -135,6 +135,38 @@ def verify_trajectories_v2(trajectories: list[dict[str, Any]], manifest: dict[st
     return issues
 
 
+def verify_tdx_attestation(bundle_dir: Path, *, production: bool = True) -> list[str]:
+    """Require Intel TDX quote bound to the dataset attestation nonce (production)."""
+    if not production:
+        return []
+    path = bundle_dir / "gpu_attestation.json"
+    if not path.exists():
+        return []
+    att = json.loads(path.read_text())
+    if "tdx" not in att:
+        return []  # legacy bundle predating TDX requirement
+    tdx = att.get("tdx")
+    if not tdx:
+        return [
+            "gpu_attestation.tdx required for production dataset bundles — "
+            "regenerate on an Intel TDX guest (provision configfs-tsm; see SparkProof README)"
+        ]
+    nonce = att.get("nonce") or (att.get("claims") or {}).get("eat_nonce") or ""
+    if not nonce:
+        return ["gpu_attestation.tdx present but dataset nonce missing"]
+    from sparkproof.gpu.tdx import tdx_report_data
+
+    expected = tdx_report_data(nonce).hex()
+    if str(tdx.get("report_data") or "").lower() != expected:
+        return [
+            "gpu_attestation.tdx report_data does not match dataset attestation nonce — "
+            "TDX quote is not bound to this bundle's trajectories_raw archive"
+        ]
+    if not tdx.get("quote_b64"):
+        return ["gpu_attestation.tdx missing quote_b64"]
+    return []
+
+
 def verify_gpu_attestation(bundle_dir: Path, manifest: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     path = bundle_dir / "gpu_attestation.json"
@@ -311,6 +343,7 @@ def verify_bundle(bundle_dir: Path, *, require_gpu_attestation: bool = True, pro
         if require_gpu_attestation:
             issues.extend(verify_gpu_attestation(bundle_dir, manifest))
         if strict_production:
+            issues.extend(verify_tdx_attestation(bundle_dir, production=True))
             issues.extend(verify_raw_to_verified_consistency(bundle_dir, manifest, trajectories))
         else:
             validation_report = bundle_dir / "validation_report.jsonl"

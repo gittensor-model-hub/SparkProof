@@ -127,6 +127,18 @@ What a verified sample proves:
 - OpenRouter calls with pinned slugs + **`reasoning.effort: xhigh`** (`request_sha256` replay)
 - Each kept sample passed Triton validation **on the attested Blackwell GPU**
 - `gpu_attestation.json` from NVIDIA CC (NRAS)
+- **`gpu_attestation.tdx`** — Intel TDX quote binding the measured VM to the same dataset nonce (production required on TDX guests)
+
+Provision configfs-tsm once per boot on TDX guests:
+
+```bash
+sudo chmod 0777 /sys/kernel/config/tsm/report
+mkdir /sys/kernel/config/tsm/report/sparkproof
+sudo chmod 0666 /sys/kernel/config/tsm/report/sparkproof/inblob
+export SPARKPROOF_TSM_REPORT_PATH=/sys/kernel/config/tsm/report/sparkproof
+```
+
+Without TDX, `sparkproof-prove` records `"tdx": null` and production verification rejects the bundle.
 - `trajectories.jsonl` = verified-only; `trajectories_raw.jsonl` = all teacher outputs
 
 ## Verifying proofs (no CC VM required)
@@ -170,8 +182,8 @@ request fingerprint, and attestation binding are internally consistent.
 
 | Mode | Teacher model guarantee | GPU guarantee |
 |---|---|---|
-| **Offline** | Bundle claims + `request_sha256` + gateway slug metadata + tamper checks | Stored `gpu_attestation.json` fields + nonce binding |
-| **Online (`--online`)** | Same as offline | Above **plus** NVIDIA NRAS JWT signature verified against NVIDIA JWKS |
+| **Offline** | Bundle claims + `request_sha256` + gateway slug metadata + tamper checks | Stored `gpu_attestation.json` fields + nonce binding + TDX `report_data` binding |
+| **Online (`--online`)** | Same as offline | Above **plus** NVIDIA NRAS JWT signature and Intel DCAP TDX quote verification |
 | **Online + OpenRouter ledger** | Can re-query OpenRouter generation IDs to confirm routed model — only for `gateway=openrouter` and only with the creating API key | Same as online |
 
 For **yunwu** bundles there is currently no external teacher ledger re-check; offline trust

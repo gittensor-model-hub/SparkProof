@@ -31,12 +31,13 @@ class GpuAttestationResult:
     gpu_profile: dict[str, Any]
     nonce: str = ""
     nonce_verified: bool = False
+    tdx: dict[str, Any] | None = None
 
     def token_sha256(self) -> str:
         return hashlib.sha256(self.token.encode()).hexdigest() if self.token else ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "passed": self.passed,
             "environment": self.environment,
             "token": self.token,
@@ -46,6 +47,9 @@ class GpuAttestationResult:
             "nonce": self.nonce,
             "nonce_verified": self.nonce_verified,
         }
+        if self.tdx is not None or self.nonce:
+            payload["tdx"] = self.tdx
+        return payload
 
 
 def _add_gpu_verifier(
@@ -139,14 +143,25 @@ def attest_blackwell_gpu(
     nonce_verified = bool(nonce) and claims.get("eat_nonce") == nonce
     _reset_client(nv_attestation)
 
+    tdx: dict[str, Any] | None = None
+    if nonce:
+        from sparkproof.gpu.tdx import tdx_quote
+
+        tdx = tdx_quote(nonce)
+
+    gpu_passed = passed and validated and (not nonce or nonce_verified)
+    tdx_required = bool(nonce)
+    tdx_passed = not tdx_required or tdx is not None
+
     return GpuAttestationResult(
-        passed=passed and validated and (not nonce or nonce_verified),
+        passed=gpu_passed and tdx_passed,
         environment=environment.upper(),
         token=token,
         claims=claims,
         gpu_profile=gpu_profile,
         nonce=used_nonce,
         nonce_verified=nonce_verified,
+        tdx=tdx,
     )
 
 
