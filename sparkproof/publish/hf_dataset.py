@@ -17,16 +17,13 @@ def trajectory_to_messages_record(trajectory: dict[str, Any]) -> dict[str, Any] 
     system = trajectory.get("system") or (
         "You are a Triton 3.7.1 GPU kernel expert for Blackwell SM12x."
     )
+    from sparkproof.triton_dataset.episodes import episode_to_messages, trajectory_has_episode
     from sparkproof.triton_dataset.training_cot import normalize_training_reasoning
 
     # Prefer the original mining-task prompt when top-level prompt is a repair /
     # CoT-recovery wrapper (prompt_meta is stamped by generate_best_of_n).
     prompt_meta = (trajectory.get("metadata") or {}).get("prompt_meta") or {}
     user_prompt = prompt_meta.get("prompt") or trajectory.get("prompt") or ""
-    reasoning = normalize_training_reasoning(trajectory.get("reasoning"))
-    assistant = trajectory.get("response", "")
-    if reasoning:
-        assistant = f"<think>\n{reasoning.strip()}\n</think>\n\n{assistant}"
 
     meta = {
         "provider": trajectory.get("provider"),
@@ -40,11 +37,33 @@ def trajectory_to_messages_record(trajectory: dict[str, Any]) -> dict[str, Any] 
         meta["cot_recovery"] = cot_recovery
     if (trajectory.get("metadata") or {}).get("cot_provider"):
         meta["cot_provider"] = trajectory["metadata"]["cot_provider"]
+    if (trajectory.get("metadata") or {}).get("multi_turn"):
+        meta["multi_turn"] = True
+        meta["episode_version"] = (trajectory.get("metadata") or {}).get("episode_version")
+        episode = (trajectory.get("metadata") or {}).get("episode") or {}
+        meta["repairs_used"] = episode.get("repairs_used")
+        meta["optimize_improved"] = episode.get("optimize_improved")
     gateway_model = trajectory.get("gateway_model") or trajectory.get("openrouter_model")
     if gateway_model:
         meta["gateway_model"] = gateway_model
     if validation:
         meta["validation_score"] = (validation.get("benchmark") or {}).get("composite_score")
+    tier = (trajectory.get("metadata") or {}).get("tier")
+    if tier:
+        meta["tier"] = tier
+
+    # Multi-turn episodes are the high-value SFT form (fail→critique→fix→optimize).
+    if trajectory_has_episode(trajectory):
+        messages = episode_to_messages((trajectory.get("metadata") or {})["episode"])
+        # Ensure system matches trajectory system when present.
+        if system and messages and messages[0].get("role") == "system":
+            messages[0] = {"role": "system", "content": system}
+        return {"messages": messages, "metadata": meta}
+
+    reasoning = normalize_training_reasoning(trajectory.get("reasoning"))
+    assistant = trajectory.get("response", "")
+    if reasoning:
+        assistant = f"<think>\n{reasoning.strip()}\n</think>\n\n{assistant}"
 
     return {
         "messages": [

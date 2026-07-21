@@ -71,6 +71,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--max-repairs", type=int, default=2)
+    parser.add_argument(
+        "--no-episodes",
+        action="store_true",
+        help="disable multi-turn episode recording (legacy single-turn trajectories only)",
+    )
+    parser.add_argument(
+        "--no-optimize",
+        action="store_true",
+        help="skip the post-correct measured optimization teacher pass (requires --benchmark)",
+    )
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument(
@@ -225,6 +235,8 @@ def main(argv: list[str] | None = None) -> int:
             run_benchmark=args.benchmark,
             strict_validate=args.strict_validate,
             capture_ir=args.capture_ir,
+            record_episode=not args.no_episodes,
+            enable_optimize=args.benchmark and not args.no_optimize,
         )
         adjudication_row = {
             "task_id": prompt_record.get("task_id"),

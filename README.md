@@ -263,6 +263,29 @@ PyTorch compute fallbacks there, and confirm that a custom Triton kernel uses gr
 syntax. PyTorch reference operations remain allowed in top-level correctness tests. Replacing
 a JIT kernel body with `pass` is not a reliable general anti-cheating test.
 
+### Multi-turn episodes (preferred training form)
+
+Prefer **better trajectories** over more shallow Prompt→Answer rows. With episodes enabled
+(default), each accepted sample can record:
+
+```text
+task → attempt → [validator fail → repair]* → [optimize feedback → optimize]? → accept
+```
+
+Validator feedback uses the **real** compile/runtime tail. The optional optimize pass runs
+only with `--benchmark` and keeps the faster correct kernel when measurements improve
+(`metadata.tier=optimized`). SFT export emits the full multi-turn chat under
+`metadata.episode` (`sparkproof-episode-v1`).
+
+```bash
+uv run sparkproof-triton-generate \
+  --prompts prompts/full.jsonl \
+  --out bundles/run-001 \
+  --benchmark --strict-validate
+# legacy single-turn only: add --no-episodes
+# skip optimize teacher call: add --no-optimize
+```
+
 ### Reasoning and debugging records
 
 Request inspectable engineering rationale rather than private chain-of-thinking. A useful
