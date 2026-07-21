@@ -154,16 +154,31 @@ def verify_tdx_attestation(bundle_dir: Path, *, production: bool = True) -> list
     nonce = att.get("nonce") or (att.get("claims") or {}).get("eat_nonce") or ""
     if not nonce:
         return ["gpu_attestation.tdx present but dataset nonce missing"]
-    from sparkproof.gpu.tdx import tdx_report_data
+    from sparkproof.gpu.tdx import extract_report_data_from_quote, tdx_report_data
 
-    expected = tdx_report_data(nonce).hex()
-    if str(tdx.get("report_data") or "").lower() != expected:
+    quote_b64 = tdx.get("quote_b64") or ""
+    if not quote_b64:
+        return ["gpu_attestation.tdx missing quote_b64"]
+
+    # Binding must come from quote bytes (DCAP-verified online). JSON report_data
+    # alone is miner-editable and must not rebind a genuine quote to another nonce.
+    quote_report_data = extract_report_data_from_quote(quote_b64)
+    if quote_report_data is None:
         return [
-            "gpu_attestation.tdx report_data does not match dataset attestation nonce — "
+            "gpu_attestation.tdx quote_b64 is too short or unparseable to extract REPORTDATA"
+        ]
+    expected = tdx_report_data(nonce).hex()
+    if quote_report_data.lower() != expected:
+        return [
+            "gpu_attestation.tdx quote REPORTDATA does not match dataset attestation nonce — "
             "TDX quote is not bound to this bundle's trajectories_raw archive"
         ]
-    if not tdx.get("quote_b64"):
-        return ["gpu_attestation.tdx missing quote_b64"]
+    json_report_data = str(tdx.get("report_data") or "").lower()
+    if json_report_data and json_report_data != quote_report_data.lower():
+        return [
+            "gpu_attestation.tdx report_data JSON does not match REPORTDATA inside quote_b64 — "
+            "possible post-hoc rebinding of a genuine quote"
+        ]
     return []
 
 

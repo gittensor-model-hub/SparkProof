@@ -29,6 +29,17 @@ def tdx_report_data(nonce_hex: str) -> bytes:
     return digest.ljust(64, b"\x00")
 
 
+def extract_report_data_from_quote(quote_b64: str) -> str | None:
+    """Hex REPORTDATA sliced from a TDX quote — never trust JSON ``report_data`` alone."""
+    try:
+        quote = base64.b64decode(quote_b64, validate=False)
+    except Exception:
+        return None
+    if len(quote) < _TDX_REPORT_DATA_OFFSET + 64:
+        return None
+    return quote[_TDX_REPORT_DATA_OFFSET : _TDX_REPORT_DATA_OFFSET + 64].hex()
+
+
 def tdx_quote(nonce_hex: str, report_path: Path | None = None) -> dict | None:
     """Capture an Intel TDX quote binding `nonce_hex`, or None without TDX/TSM."""
     node = report_path or Path(os.environ.get("SPARKPROOF_TSM_REPORT_PATH") or DEFAULT_TSM_REPORT_PATH)
