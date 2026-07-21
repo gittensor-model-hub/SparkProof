@@ -116,22 +116,74 @@ def test_verify_tdx_attestation_rejects_explicit_null_tdx(tmp_path: Path):
 
 
 def test_verify_tdx_attestation_accepts_bound_quote(tmp_path: Path):
-    from sparkproof.gpu.tdx import tdx_report_data
+    import base64
+
+    from sparkproof.gpu.tdx import _TDX_REPORT_DATA_OFFSET, tdx_report_data
 
     nonce = "b" * 64
+    report = tdx_report_data(nonce)
+    quote = b"\x00" * _TDX_REPORT_DATA_OFFSET + report + b"\x00" * 128
     (tmp_path / "gpu_attestation.json").write_text(
         json.dumps(
             {
                 "passed": True,
                 "nonce": nonce,
                 "tdx": {
-                    "quote_b64": "AAAA",
-                    "report_data": tdx_report_data(nonce).hex(),
+                    "quote_b64": base64.b64encode(quote).decode(),
+                    "report_data": report.hex(),
                 },
             }
         )
     )
     assert verify_tdx_attestation(tmp_path, production=True) == []
+
+
+def test_verify_tdx_attestation_rejects_forged_json_report_data(tmp_path: Path):
+    """Genuine quote for nonce A + JSON report_data for nonce B must fail."""
+    import base64
+
+    from sparkproof.gpu.tdx import _TDX_REPORT_DATA_OFFSET, tdx_report_data
+
+    nonce_a = "a" * 64
+    nonce_b = "b" * 64
+    quote = b"\x00" * _TDX_REPORT_DATA_OFFSET + tdx_report_data(nonce_a) + b"\x00" * 128
+    (tmp_path / "gpu_attestation.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "nonce": nonce_b,
+                "tdx": {
+                    "quote_b64": base64.b64encode(quote).decode(),
+                    "report_data": tdx_report_data(nonce_b).hex(),
+                },
+            }
+        )
+    )
+    issues = verify_tdx_attestation(tmp_path, production=True)
+    assert any("REPORTDATA" in i or "report_data" in i for i in issues)
+
+
+def test_verify_tdx_attestation_rejects_json_sidecar_mismatch(tmp_path: Path):
+    import base64
+
+    from sparkproof.gpu.tdx import _TDX_REPORT_DATA_OFFSET, tdx_report_data
+
+    nonce = "c" * 64
+    quote = b"\x00" * _TDX_REPORT_DATA_OFFSET + tdx_report_data(nonce) + b"\x00" * 128
+    (tmp_path / "gpu_attestation.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "nonce": nonce,
+                "tdx": {
+                    "quote_b64": base64.b64encode(quote).decode(),
+                    "report_data": tdx_report_data("d" * 64).hex(),
+                },
+            }
+        )
+    )
+    issues = verify_tdx_attestation(tmp_path, production=True)
+    assert any("JSON" in i or "report_data" in i for i in issues)
 
 
 def test_verify_manifest_policy_accepts_blackwell():

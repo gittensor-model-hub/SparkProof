@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **TDX binding reads REPORTDATA from ``quote_b64``, not JSON** : `verify_tdx_attestation`
+  extracts the 64-byte REPORTDATA at the TDX v4 offset inside the quote and compares it
+  to `tdx_report_data(nonce)`. Miner-editable `tdx.report_data` can no longer rebind a
+  genuine Intel-signed quote to another dataset nonce; JSON/quote mismatches are rejected.
+
 ## [0.1.3] — 2026-07-21
 
 Train-able CoT recovery when GPT 5.6 Sol wins with encrypted reasoning, plus repair-tier
