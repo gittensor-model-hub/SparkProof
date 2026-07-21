@@ -9,17 +9,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-07-21
+
+Train-able CoT recovery when GPT 5.6 Sol wins with encrypted reasoning, plus repair-tier
+novelty fingerprinting that matches the mining task (not the self-repair wrapper).
+
+`generator_version` remains **0.3.0** (package release `0.1.3`).
+
 ### Added
-- **Sol→Fable training-CoT recovery**: when GPT 5.6 Sol wins best-of-N but only
+- **Sol→Fable training-CoT recovery** ([#31]): when GPT 5.6 Sol wins best-of-N but only
   returns encrypted/empty reasoning, SparkProof calls Claude Fable 5 to (1) re-solve
   with Sol's verified kernel as a hint and re-validate, preferring Fable when it
   passes with plaintext CoT, else (2) explain Sol's gold answer and attach Fable's
   rationale under `reasoning` (`metadata.cot_recovery`: `fable_resolve` /
   `fable_explain`). SFT export skips encrypted reasoning JSON and prefers
   `prompt_meta.prompt` as the user turn.
+- **`scripts/yunwu_reasoning_probe.py`**: probe yunwu `gpt-5.6-sol` reasoning shapes
+  (plaintext vs encrypted `reasoning_details`) using the production request format.
 
 ### Fixed
-- **Repair-tier novelty fingerprint** ([#29]): `fingerprint_row()` now prefers
+- **Repair-tier novelty fingerprint** ([#29], [#30]): `fingerprint_row()` now prefers
   `metadata.prompt_meta.prompt` over top-level `prompt`, so repair rows fingerprint the
   mining task instead of the shared self-repair wrapper. Fixes false exact duplicates and
   pre-gen vs post-gen novelty mismatch on repair-heavy bundles.
@@ -358,8 +367,8 @@ Set `SPARKPROOF_RUN_GPU_TESTS=1` on a Blackwell or Hopper runner. Triton JIT req
 
 ---
 
-[Unreleased]: https://github.com/gittensor-model-hub/SparkProof/compare/v0.1.1...HEAD
-[Unreleased]: https://github.com/gittensor-model-hub/SparkProof/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/gittensor-model-hub/SparkProof/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.3
 [0.1.2]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.2
 [0.1.1]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.1
 [0.1.0]: https://github.com/gittensor-model-hub/SparkProof/releases/tag/v0.1.0
