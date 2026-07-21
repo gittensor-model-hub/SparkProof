@@ -292,6 +292,8 @@ def main(argv: list[str] | None = None) -> int:
         "temperature": 0.7,
         "multi_candidate": True,
         "max_repairs": args.max_repairs,
+        "record_episodes": not args.no_episodes,
+        "enable_optimize": bool(args.benchmark and not args.no_optimize),
     }
     sampling_report_path = args.prompts.with_suffix(".sampling.json")
     sampling_provenance = None
