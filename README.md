@@ -265,9 +265,14 @@ a JIT kernel body with `pass` is not a reliable general anti-cheating test.
 
 ### Reasoning and debugging records
 
-Request inspectable engineering rationale rather than private chain-of-thought. A useful
+Request inspectable engineering rationale rather than private chain-of-thinking. A useful
 teacher response explains decomposition/grid, tile selection, pointer and stride equations,
 masking, accumulation precision, expected bottleneck, implementation, and validation.
+
+When GPT 5.6 Sol wins best-of-N but only returns **encrypted** reasoning, SparkProof
+recovers a train-able CoT via Claude Fable 5: re-solve (hinted by Sol's verified kernel) +
+GPU re-validation first; if that fails, explain Sol's gold answer and keep Sol's response
+with Fable's plaintext rationale. Provenance is recorded under `metadata.cot_recovery`.
 
 Debugging prompts must contain the **actual** error produced by running the broken kernel:
 
