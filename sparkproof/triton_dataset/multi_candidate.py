@@ -171,6 +171,7 @@ def generate_best_of_n(
     strict_validate: bool = False,
     capture_ir: bool = False,
     validator: TritonKernelValidator | None = None,
+    recover_training_cot: bool = True,
 ) -> tuple[CandidateResult | None, list[CandidateResult]]:
     unknown = set(providers) - SUPPORTED_PROVIDERS
     if unknown:
@@ -206,7 +207,27 @@ def generate_best_of_n(
 
     winners = [c for c in candidates if c.validation.get("passed")]
     winners.sort(key=lambda c: c.score, reverse=True)
-    return (winners[0] if winners else None, candidates)
+    winner = winners[0] if winners else None
+
+    # When GPT Sol wins with encrypted/empty CoT, recover a train-able Fable
+    # rationale (re-solve + validate, else explain + keep Sol gold answer).
+    if winner is not None and recover_training_cot:
+        from sparkproof.triton_dataset.training_cot import recover_openai_winner_cot
+
+        winner = recover_openai_winner_cot(
+            winner,
+            gateway=gateway,
+            api_key=api_key,
+            original_prompt=prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            validator=validator,
+            run_benchmark=run_benchmark,
+            strict_validate=strict_validate,
+            capture_ir=capture_ir,
+        )
+    return winner, candidates
 
 
 def generate_best_candidate(
@@ -230,6 +251,7 @@ def generate_best_candidate(
     strict_validate = strict_validate or bool(_client_value(client, "strict_validate", False))
     capture_ir = capture_ir or bool(_client_value(client, "capture_ir", False))
 
+    recover_training_cot = bool(_client_value(client, "recover_training_cot", True))
     winner, all_candidates = generate_best_of_n(
         gateway=gateway,
         api_key=api_key,
@@ -243,6 +265,7 @@ def generate_best_candidate(
         strict_validate=strict_validate,
         capture_ir=capture_ir,
         validator=validator,
+        recover_training_cot=recover_training_cot,
     )
     candidate_rows = [
         {

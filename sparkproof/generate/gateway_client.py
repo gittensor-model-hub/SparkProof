@@ -85,7 +85,14 @@ def generate_via_gateway(
 
     reasoning = message.get("reasoning") or message.get("reasoning_content")
     if not reasoning and message.get("reasoning_details"):
-        reasoning = json.dumps(message["reasoning_details"], ensure_ascii=False)
+        # Prefer plaintext reasoning.text / summary; never persist encrypted-only
+        # blobs as training CoT (GPT 5.6 Sol often returns encrypted details).
+        from sparkproof.triton_dataset.training_cot import extract_plaintext_reasoning_details
+
+        reasoning = extract_plaintext_reasoning_details(message["reasoning_details"])
+        if reasoning is None:
+            # Keep a compact marker for debugging; SFT export skips non-usable CoT.
+            reasoning = json.dumps(message["reasoning_details"], ensure_ascii=False)
 
     metadata: dict[str, Any] = {
         "finish_reason": choice.get("finish_reason"),

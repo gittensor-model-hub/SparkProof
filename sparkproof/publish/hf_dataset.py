@@ -17,7 +17,13 @@ def trajectory_to_messages_record(trajectory: dict[str, Any]) -> dict[str, Any] 
     system = trajectory.get("system") or (
         "You are a Triton 3.7.1 GPU kernel expert for Blackwell SM12x."
     )
-    reasoning = trajectory.get("reasoning")
+    from sparkproof.triton_dataset.training_cot import normalize_training_reasoning
+
+    # Prefer the original mining-task prompt when top-level prompt is a repair /
+    # CoT-recovery wrapper (prompt_meta is stamped by generate_best_of_n).
+    prompt_meta = (trajectory.get("metadata") or {}).get("prompt_meta") or {}
+    user_prompt = prompt_meta.get("prompt") or trajectory.get("prompt") or ""
+    reasoning = normalize_training_reasoning(trajectory.get("reasoning"))
     assistant = trajectory.get("response", "")
     if reasoning:
         assistant = f"<think>\n{reasoning.strip()}\n</think>\n\n{assistant}"
@@ -26,9 +32,14 @@ def trajectory_to_messages_record(trajectory: dict[str, Any]) -> dict[str, Any] 
         "provider": trajectory.get("provider"),
         "model": trajectory.get("model"),
         "gateway": trajectory.get("gateway"),
-        "task_id": (trajectory.get("metadata") or {}).get("prompt_meta", {}).get("task_id"),
-        "category": (trajectory.get("metadata") or {}).get("prompt_meta", {}).get("category"),
+        "task_id": prompt_meta.get("task_id"),
+        "category": prompt_meta.get("category"),
     }
+    cot_recovery = (trajectory.get("metadata") or {}).get("cot_recovery")
+    if cot_recovery:
+        meta["cot_recovery"] = cot_recovery
+    if (trajectory.get("metadata") or {}).get("cot_provider"):
+        meta["cot_provider"] = trajectory["metadata"]["cot_provider"]
     gateway_model = trajectory.get("gateway_model") or trajectory.get("openrouter_model")
     if gateway_model:
         meta["gateway_model"] = gateway_model
@@ -38,7 +49,7 @@ def trajectory_to_messages_record(trajectory: dict[str, Any]) -> dict[str, Any] 
     return {
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": trajectory["prompt"]},
+            {"role": "user", "content": user_prompt},
             {"role": "assistant", "content": assistant},
         ],
         "metadata": meta,

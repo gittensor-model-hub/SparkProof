@@ -9,6 +9,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Sol→Fable training-CoT recovery**: when GPT 5.6 Sol wins best-of-N but only
+  returns encrypted/empty reasoning, SparkProof calls Claude Fable 5 to (1) re-solve
+  with Sol's verified kernel as a hint and re-validate, preferring Fable when it
+  passes with plaintext CoT, else (2) explain Sol's gold answer and attach Fable's
+  rationale under `reasoning` (`metadata.cot_recovery`: `fable_resolve` /
+  `fable_explain`). SFT export skips encrypted reasoning JSON and prefers
+  `prompt_meta.prompt` as the user turn.
+
 ### Fixed
 - **Repair-tier novelty fingerprint** ([#29]): `fingerprint_row()` now prefers
   `metadata.prompt_meta.prompt` over top-level `prompt`, so repair rows fingerprint the
