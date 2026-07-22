@@ -24,7 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   [KernelBench](https://huggingface.co/datasets/ScalingIntelligence/KernelBench)
   fingerprints, optional code-only repair hints from opus failed turns. Never
   copies external CoT — re-prove with `sparkproof-triton-generate` on a CC VM.
-  Script: `scripts/import_external_tasks.sh`.
+  Docs: [`docs/EXTERNAL_SEEDS.md`](docs/EXTERNAL_SEEDS.md), miner section in
+  [`docs/MINER_GUIDE.md`](docs/MINER_GUIDE.md). Script: `scripts/import_external_tasks.sh`.
 
 ### Fixed
 - **TDX binding reads REPORTDATA from ``quote_b64``, not JSON** : `verify_tdx_attestation`
