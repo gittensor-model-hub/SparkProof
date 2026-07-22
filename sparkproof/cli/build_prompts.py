@@ -94,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--mined-prompts", type=Path, default=None, help="failure-mined tasks jsonl")
     parser.add_argument("--evolved-prompts", type=Path, default=None, help="self-evolved tasks jsonl")
+    parser.add_argument(
+        "--seed-prompts",
+        type=Path,
+        default=None,
+        help="external KernelBook/seed tasks from sparkproof-import-external-tasks",
+    )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
         "--source",
@@ -110,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--sources",
         default=DEFAULT_TRAIN_SOURCES_STR,
-        help="comma-separated: api_doc,doc_semantics,doc_tutorial,mutation,torch_op,failure_mining,self_evolution",
+        help="comma-separated: api_doc,doc_semantics,doc_tutorial,mutation,torch_op,failure_mining,self_evolution,kernelbook_seed",
     )
     args = parser.parse_args(argv)
 
@@ -128,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         doc_dir=args.doc_dir,
         mined_prompts_path=args.mined_prompts,
         evolved_prompts_path=args.evolved_prompts,
+        seed_prompts_path=args.seed_prompts,
         limit=args.limit,
         sources=sources,
         auto_fetch_docs=not args.no_fetch_docs,

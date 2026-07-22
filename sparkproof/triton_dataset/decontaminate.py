@@ -35,6 +35,10 @@ class TritonASTCanonicalizer(ast.NodeTransformer):
         node.name = "_"
         return self.generic_visit(node)
 
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.ClassDef:
+        node.name = "_"
+        return self.generic_visit(node)
+
 
 def get_canonical_structure(code: str) -> str:
     try:
@@ -144,6 +148,14 @@ class TritonDecontaminator:
             except OSError:
                 continue
 
+    def add_eval_pytorch_code(self, code: str) -> None:
+        """Fingerprint a held-out PyTorch problem (e.g. KernelBench) for decontam."""
+        text = code.strip()
+        if not text:
+            return
+        self.prompt_hashes.add(text_fingerprint(text))
+        self.structures.add(get_canonical_structure(text))
+
     def check_task(self, task: dict[str, Any]) -> list[str]:
         issues: list[str] = []
         origin = task.get("origin") or task.get("source")
@@ -154,6 +166,12 @@ class TritonDecontaminator:
         ph = text_fingerprint(task.get("prompt", ""))
         if ph in self.prompt_hashes:
             issues.append("prompt matches eval fingerprint")
+        torch_ref = str(task.get("torch_reference") or task.get("reference_expr") or "").strip()
+        if torch_ref:
+            if text_fingerprint(torch_ref) in self.prompt_hashes:
+                issues.append("torch_reference matches eval fingerprint")
+            if self.is_contaminated_code(torch_ref):
+                issues.append("torch_reference structure matches eval corpus")
         sh = semantic_task_fingerprint(task)
         if sh in self.semantic_hashes:
             issues.append("semantic fingerprint matches eval task")

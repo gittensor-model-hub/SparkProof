@@ -15,6 +15,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   real validator feedback turns and an optional measured optimization pass when
   `--benchmark` is set. HF/SFT export prefers multi-turn chat messages over
   single Prompt→Answer rows. Flags: `--no-episodes`, `--no-optimize`.
+- **External corpus → task seeds** (`sparkproof-import-external-tasks`): import
+  [KernelBook](https://huggingface.co/datasets/GPUMODE/KernelBook),
+  [opus multi-turn traces](https://huggingface.co/datasets/ppbhatt500/kernelbook-opus4.8-multiturn-traces),
+  and [gpt-oss reasoning traces](https://huggingface.co/datasets/ppbhatt500/kernelbook-triton-reasoning-traces)
+  as **PyTorch problems only** (origin `kernelbook_seed`). Filters permissive
+  licenses, drops KernelBench-sourced rows, decontaminates against TritonBench +
+  [KernelBench](https://huggingface.co/datasets/ScalingIntelligence/KernelBench)
+  fingerprints, optional code-only repair hints from opus failed turns. Never
+  copies external CoT — re-prove with `sparkproof-triton-generate` on a CC VM.
+  Script: `scripts/import_external_tasks.sh`.
 
 ### Fixed
 - **TDX binding reads REPORTDATA from ``quote_b64``, not JSON** : `verify_tdx_attestation`

@@ -1,0 +1,2 @@
+{"sample_key": "kb-1", "source": "kernelbook", "name": "LayerNormLite", "pytorch_code": "import torch\nimport torch.nn as nn\nclass LayerNormLite(nn.Module):\n    def __init__(self, n):\n        super().__init__()\n        self.n = n\n    def forward(self, x):\n        return x - x.mean(-1, keepdim=True)\n", "problem_id": 7}
+{"sample_key": "kb-bench", "source": "kernelbench", "name": "19_ReLU", "pytorch_code": "import torch\nimport torch.nn as nn\nclass Model(nn.Module):\n    def forward(self, x):\n        return torch.relu(x)\n", "problem_id": 19}

@@ -80,6 +80,13 @@ def _finalize(record: dict[str, Any], *, gpu_architecture: str = ARCH_BLACKWELL)
         "parent_id",
         "evolution_ops",
         "gpu_architecture",
+        "source_dataset",
+        "source_uuid",
+        "entry_point",
+        "licenses",
+        "repo_name",
+        "repo_link",
+        "repair_hint_kernel",
     ):
         if key in record and record[key] is not None:
             out[key] = record[key]
@@ -117,6 +124,7 @@ def iter_all_prompts(
     doc_dir: Path | None = None,
     mined_prompts_path: Path | None = None,
     evolved_prompts_path: Path | None = None,
+    seed_prompts_path: Path | None = None,
     include_sources: frozenset[str] | None = None,
     auto_fetch_docs: bool = True,
     enrich_api_pages: bool | None = None,
@@ -219,6 +227,14 @@ def iter_all_prompts(
             rec.setdefault("origin", "self_evolution")
             yield from emit(rec)
 
+    if "kernelbook_seed" in sources and seed_prompts_path and seed_prompts_path.exists():
+        for rec in _load_jsonl_prompts(seed_prompts_path):
+            rec.setdefault("source", "kernelbook_seed")
+            rec.setdefault("origin", "kernelbook_seed")
+            if apply_templates:
+                rec = apply_prompt_template(rec, gpu_architecture=gpu_architecture)
+            yield from emit(rec)
+
 
 def write_prompts_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> int:
     """Atomically stream validated records to JSONL."""
@@ -260,6 +276,7 @@ def build_prompts_file(
     doc_dir: Path | None = None,
     mined_prompts_path: Path | None = None,
     evolved_prompts_path: Path | None = None,
+    seed_prompts_path: Path | None = None,
     limit: int | None = None,
     sources: frozenset[str] | None = None,
     auto_fetch_docs: bool = True,
@@ -294,6 +311,7 @@ def build_prompts_file(
             doc_dir=doc_dir,
             mined_prompts_path=mined_prompts_path,
             evolved_prompts_path=evolved_prompts_path,
+            seed_prompts_path=seed_prompts_path,
             include_sources=sources,
             auto_fetch_docs=auto_fetch_docs,
             enrich_api_pages=enrich_api_pages,

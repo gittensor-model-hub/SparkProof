@@ -1,0 +1,2 @@
+{"code": "import torch\nimport torch.nn as nn\nclass Model(nn.Module):\n    def forward(self, x):\n        return torch.relu(x)\n", "level": 1, "name": "19_ReLU", "problem_id": 19}
+{"code": "import torch\nimport torch.nn as nn\nclass Model(nn.Module):\n    def forward(self, predictions, targets):\n        return torch.mean(torch.clamp(1 - predictions * targets, min=0))\n", "level": 1, "name": "100_HingeLoss", "problem_id": 100}

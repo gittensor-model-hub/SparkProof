@@ -8,6 +8,7 @@ FORBIDDEN_TRAINING_ORIGINS = frozenset(
     {
         "tritonbench",
         "kernelbench_eval",
+        "kernelbench",
         "private_eval",
         "yaml",
     }
