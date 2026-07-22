@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Multi-turn training episodes** (fail → critique → fix → optimize → accept):
+  `generate_with_repair` records a `metadata.episode` (`sparkproof-episode-v1`) with
+  real validator feedback turns and an optional measured optimization pass when
+  `--benchmark` is set. HF/SFT export prefers multi-turn chat messages over
+  single Prompt→Answer rows. Flags: `--no-episodes`, `--no-optimize`.
+
 ### Fixed
 - **TDX binding reads REPORTDATA from ``quote_b64``, not JSON** : `verify_tdx_attestation`
   extracts the 64-byte REPORTDATA at the TDX v4 offset inside the quote and compares it

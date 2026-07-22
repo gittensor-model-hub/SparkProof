@@ -100,6 +100,7 @@ def build_manifest(
         elif tier == "repair":
             repair += 1
         else:
+            # gold + optimized episodes
             gold += 1
         if (t.get("metadata") or {}).get("dpo_pair"):
             dpo += 1
