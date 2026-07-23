@@ -10,6 +10,7 @@ from pathlib import Path
 from sparkproof.bundle import write_bundle
 from sparkproof.env_loader import load_dotenv
 from sparkproof.gateways import ALLOWED_GATEWAYS, default_gateway, resolve_api_key
+from sparkproof.generate.gateway_client import GatewayTransientError
 from sparkproof.generate.runner import iter_prompts
 from sparkproof.hashing import sha256_file
 from sparkproof.manifest import build_manifest
@@ -48,6 +49,18 @@ def _load_jsonl(path: Path) -> list[dict]:
             except json.JSONDecodeError as exc:
                 raise ValueError(f"invalid checkpoint JSON at {path}:{line_number}") from exc
     return rows
+
+
+def _gateway_error_row(prompt_record: dict, exc: Exception) -> dict:
+    return {
+        "task_id": prompt_record.get("task_id"),
+        "prompt": prompt_record.get("prompt", ""),
+        "system": prompt_record.get("system", ""),
+        "status": "gateway_error",
+        "error": str(exc),
+        "winner_provider": None,
+        "candidates": [],
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -204,40 +217,58 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         if args.orchestrate:
-            step = run_dataset_generation_step(
-                prompt_record,
-                client=client,
-                validator=None,
-                decontaminator=decontaminator,
-                evolve_depth=args.evolve_depth,
-                run_id=run_id,
-                run_benchmark=args.benchmark,
-                run_seed=run_seed,
-                debug_split=args.out / "failure_records.jsonl",
-                mined_split=args.out / "mined_tasks.jsonl",
-            )
+            try:
+                step = run_dataset_generation_step(
+                    prompt_record,
+                    client=client,
+                    validator=None,
+                    decontaminator=decontaminator,
+                    evolve_depth=args.evolve_depth,
+                    run_id=run_id,
+                    run_benchmark=args.benchmark,
+                    run_seed=run_seed,
+                    debug_split=args.out / "failure_records.jsonl",
+                    mined_split=args.out / "mined_tasks.jsonl",
+                )
+            except GatewayTransientError as exc:
+                print(
+                    f"gateway error for {prompt_record.get('task_id')}: {exc}",
+                    file=sys.stderr,
+                )
+                step = _gateway_error_row(prompt_record, exc)
             adjudication.append(step)
             _append_jsonl(adjudication_checkpoint, step)
-            for item in step["results"]:
+            for item in step.get("results", []):
                 if item.get("status") == "accepted":
                     trajectories.append(item["trajectory"])
                     _append_jsonl(trajectory_checkpoint, item["trajectory"])
             continue
 
-        winner, all_candidates = generate_best_of_n(
-            gateway=gateway,
-            api_key=api_key,
-            prompt_record=prompt_record,
-            providers=providers,
-            max_tokens=args.max_tokens,
-            max_repairs=args.max_repairs,
-            gpu_index=args.gpu,
-            run_benchmark=args.benchmark,
-            strict_validate=args.strict_validate,
-            capture_ir=args.capture_ir,
-            record_episode=not args.no_episodes,
-            enable_optimize=args.benchmark and not args.no_optimize,
-        )
+        try:
+            winner, all_candidates = generate_best_of_n(
+                gateway=gateway,
+                api_key=api_key,
+                prompt_record=prompt_record,
+                providers=providers,
+                max_tokens=args.max_tokens,
+                max_repairs=args.max_repairs,
+                gpu_index=args.gpu,
+                run_benchmark=args.benchmark,
+                strict_validate=args.strict_validate,
+                capture_ir=args.capture_ir,
+                record_episode=not args.no_episodes,
+                enable_optimize=args.benchmark and not args.no_optimize,
+            )
+        except GatewayTransientError as exc:
+            print(
+                f"gateway error for {prompt_record.get('task_id')}: {exc}",
+                file=sys.stderr,
+            )
+            adjudication_row = _gateway_error_row(prompt_record, exc)
+            adjudication.append(adjudication_row)
+            _append_jsonl(adjudication_checkpoint, adjudication_row)
+            continue
+
         adjudication_row = {
             "task_id": prompt_record.get("task_id"),
             "prompt": prompt_record.get("prompt", ""),

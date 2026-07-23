@@ -17,6 +17,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   single Prompt→Answer rows. Flags: `--no-episodes`, `--no-optimize`.
 
 ### Fixed
+- **Yunwu teacher timeouts during dataset generation**: gateway chat calls now default to
+  a 15-minute read timeout on yunwu (900s; was 300s), retry transient failures (read
+  timeout, connection blips, HTTP 429/502/503/504) with exponential backoff, and record
+  `gateway_error` adjudication rows instead of aborting the whole `sparkproof-triton-generate`
+  run. Configure via `SPARKPROOF_GATEWAY_TIMEOUT`, `SPARKPROOF_YUNWU_TIMEOUT`,
+  `SPARKPROOF_GATEWAY_RETRIES`, and `SPARKPROOF_GATEWAY_RETRY_BACKOFF`.
 - **TDX binding reads REPORTDATA from ``quote_b64``, not JSON** : `verify_tdx_attestation`
   extracts the 64-byte REPORTDATA at the TDX v4 offset inside the quote and compares it
   to `tdx_report_data(nonce)`. Miner-editable `tdx.report_data` can no longer rebind a
