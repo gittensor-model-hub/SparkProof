@@ -146,6 +146,27 @@ def resolve_api_key(gateway: str) -> str:
     return value
 
 
+def gateway_timeout_seconds(gateway: str) -> int:
+    """Per-request read timeout for teacher chat completions.
+
+  Yunwu at ``xhigh`` reasoning often exceeds 5 minutes; default 15 minutes there.
+  Override with ``SPARKPROOF_GATEWAY_TIMEOUT`` (all gateways) or gateway-specific vars.
+    """
+    if override := os.environ.get("SPARKPROOF_GATEWAY_TIMEOUT", "").strip():
+        return max(1, int(override))
+    if gateway == GATEWAY_YUNWU:
+        return max(1, int(os.environ.get("SPARKPROOF_YUNWU_TIMEOUT", "900")))
+    return max(1, int(os.environ.get("SPARKPROOF_OPENROUTER_TIMEOUT", "300")))
+
+
+def gateway_max_retries() -> int:
+    return max(0, int(os.environ.get("SPARKPROOF_GATEWAY_RETRIES", "3")))
+
+
+def gateway_retry_backoff_seconds() -> float:
+    return max(0.0, float(os.environ.get("SPARKPROOF_GATEWAY_RETRY_BACKOFF", "5")))
+
+
 def trajectory_gateway_model(record: dict[str, Any]) -> str | None:
     return record.get("gateway_model") or record.get("openrouter_model")
 

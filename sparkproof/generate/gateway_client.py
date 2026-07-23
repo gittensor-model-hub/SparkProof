@@ -3,14 +3,42 @@
 from __future__ import annotations
 
 import json
+import socket
+import time
 import urllib.error
 import urllib.request
 from typing import Any
 
-from sparkproof.gateways import GATEWAY_OPENROUTER, GATEWAY_YUNWU, get_gateway
+from sparkproof.gateways import (
+    GATEWAY_OPENROUTER,
+    GATEWAY_YUNWU,
+    gateway_max_retries,
+    gateway_retry_backoff_seconds,
+    gateway_timeout_seconds,
+    get_gateway,
+)
 from sparkproof.hashing import canonical_json_bytes, sha256_hex
 from sparkproof.policy import REQUIRED_REASONING_EFFORT, normalize_upstream_model, validate_gateway_trajectory
 from sparkproof.teacher_request import build_chat_body, generation_config, request_sha256
+
+
+class GatewayTransientError(RuntimeError):
+    """Teacher gateway failed after retries (timeout, rate limit, upstream 5xx)."""
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in {429, 502, 503, 504}
+    if isinstance(exc, TimeoutError):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return True
+        # Connection reset / transient network blips on long yunwu runs.
+        if isinstance(reason, OSError):
+            return True
+    return False
 
 
 def _post_chat(
@@ -18,7 +46,8 @@ def _post_chat(
     gateway: str,
     api_key: str,
     body: dict[str, Any],
-    timeout: int = 300,
+    timeout: int | None = None,
+    max_retries: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     policy = get_gateway(gateway)
     headers = {
@@ -32,20 +61,43 @@ def _post_chat(
 
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(policy.chat_url, data=data, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-            response_headers = {k.lower(): v for k, v in resp.headers.items()}
-            return payload, response_headers
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        hint = ""
-        if gateway == GATEWAY_YUNWU and e.code == 503:
-            hint = (
-                " — yunwu has no channel for this model slug. "
-                "Run: sparkproof-yunwu-probe --auto --write-env .env"
-            )
-        raise RuntimeError(f"HTTP {e.code} from {gateway}: {detail}{hint}") from e
+    read_timeout = timeout if timeout is not None else gateway_timeout_seconds(gateway)
+    retries = gateway_max_retries() if max_retries is None else max(0, max_retries)
+    backoff = gateway_retry_backoff_seconds()
+
+    last_exc: BaseException | None = None
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=read_timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+                response_headers = {k.lower(): v for k, v in resp.headers.items()}
+                return payload, response_headers
+        except urllib.error.HTTPError as e:
+            last_exc = e
+            detail = e.read().decode("utf-8", errors="replace")
+            if not _is_retryable(e) or attempt >= retries:
+                hint = ""
+                if gateway == GATEWAY_YUNWU and e.code == 503:
+                    hint = (
+                        " — yunwu has no channel for this model slug. "
+                        "Run: sparkproof-yunwu-probe --auto --write-env .env"
+                    )
+                raise RuntimeError(f"HTTP {e.code} from {gateway}: {detail}{hint}") from e
+        except Exception as e:
+            last_exc = e
+            if not _is_retryable(e) or attempt >= retries:
+                if _is_retryable(e):
+                    raise GatewayTransientError(
+                        f"{gateway} request failed after {retries + 1} attempt(s) "
+                        f"(timeout={read_timeout}s): {e}"
+                    ) from e
+                raise
+
+        sleep_s = backoff * (2**attempt)
+        if sleep_s > 0:
+            time.sleep(sleep_s)
+
+    raise GatewayTransientError(f"{gateway} request failed: {last_exc}")
 
 
 def generate_via_gateway(
@@ -58,6 +110,8 @@ def generate_via_gateway(
     max_tokens: int,
     temperature: float = 0.7,
     reasoning_effort: str = REQUIRED_REASONING_EFFORT,
+    timeout: int | None = None,
+    max_retries: int | None = None,
 ) -> dict[str, Any]:
     policy = get_gateway(gateway)
     body = build_chat_body(
@@ -71,7 +125,13 @@ def generate_via_gateway(
     )
     requested_model = body["model"]
     request_sha = request_sha256(body)
-    payload, response_headers = _post_chat(gateway=gateway, api_key=api_key, body=body)
+    payload, response_headers = _post_chat(
+        gateway=gateway,
+        api_key=api_key,
+        body=body,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
     response_sha = sha256_hex(canonical_json_bytes(payload))
 
     choice = (payload.get("choices") or [{}])[0]
