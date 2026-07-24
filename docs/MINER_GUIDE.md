@@ -112,6 +112,28 @@ match after a successful run.
 Download `accepted_task_ids.json` from the mining HF repo and filter prompts before
 generation so you do not retry tasks already in the accepted registry.
 
+## External corpora (KernelBook / multi-turn traces)
+
+Public datasets such as KernelBook and related reasoning traces are **task seeds**, not
+ready-made proof bundles. Import PyTorch problems only, then re-generate with pinned
+teachers on a CC VM so rows are SN74-verifiable.
+
+Detailed policy (licenses, KernelBench ban, repair hints, failure modes):
+**[`docs/EXTERNAL_SEEDS.md`](EXTERNAL_SEEDS.md)**.
+
+```bash
+uv sync --extra publish --frozen
+scripts/import_external_tasks.sh --limit 50
+# CC VM:
+uv run sparkproof-triton-generate --prompts prompts/kernelbook_seed.jsonl \
+  --out bundles/kb-seed-001 --decontaminate --orchestrate --benchmark
+uv run sparkproof-publish-dataset --bundle bundles/kb-seed-001 \
+  --repo-id YOU/sparkproof-kb-seed-v1 --release-gate --mining-repo
+```
+
+Never copy external CoT / Inductor kernels into `trajectories.jsonl`. KernelBench is
+eval-only (fingerprints for decontam only).
+
 ## Production checklist
 
 | Step | Command / artifact |
@@ -125,6 +147,7 @@ generation so you do not retry tasks already in the accepted registry.
 
 ## Further reading
 
+- External task seeds (KernelBook / opus / gpt-oss → re-prove): [`docs/EXTERNAL_SEEDS.md`](EXTERNAL_SEEDS.md)
 - SparkDistill dataset track: [`SparkDistill/datasets/README.md`](https://github.com/gittensor-model-hub/SparkDistill/blob/main/datasets/README.md)
 - SparkDistill miner guide (rewards, tiers): [`SparkDistill/docs/miner-guide.md`](https://github.com/gittensor-model-hub/SparkDistill/blob/main/docs/miner-guide.md)
 - Doc-chunk prompt sources: [`docs/DOC_CHUNK_PROMPTS.md`](DOC_CHUNK_PROMPTS.md)

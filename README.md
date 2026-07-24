@@ -39,6 +39,7 @@ Set `SPARKPROOF_GATEWAY=yunwu` or pass `--gateway yunwu` to `sparkproof-generate
 |---|---|
 | [`sparkproof/`](sparkproof) | gateway clients, GPU attestation, manifest/Merkle verification, Triton dataset pipeline |
 | [`docs/MINER_GUIDE.md`](docs/MINER_GUIDE.md) | **dataset-track miner workflow** (generate → dedupe check → publish → registry PR) |
+| [`docs/EXTERNAL_SEEDS.md`](docs/EXTERNAL_SEEDS.md) | KernelBook / opus / gpt-oss → task seeds → CC re-prove (never paste external CoT) |
 | [`scripts/`](scripts) | one-command install/generate/verify/pipeline entry points |
 | [`policies/`](policies) | pinned teacher + GPU policy (`gpu_remote_v3.json`) |
 | [`tests/`](tests) | manifest, Merkle, policy, and gateway unit tests |
@@ -87,13 +88,27 @@ Five prompt sources — **TritonBench YAML is eval-only** (never in training pro
 | C Torch ops | `triton_dataset/torch_ops.py` | 17 PyTorch → Triton translation tasks |
 | D Self-evolution | `triton_dataset/self_evolve.py` | Deterministic ops over oracle-backed parents |
 | E Failure-mining | `triton_dataset/failure_miner.py` | Dev failures → new private tasks (never eval) |
-| Eval only | `eval_problems.py` + `eval_harness.py` | `sparkproof-eval-tritonbench` — isolated from dataset |
+| F External seeds | `triton_dataset/external_seeds.py` | KernelBook / opus / gpt-oss **PyTorch tasks only** → re-prove on CC — [`docs/EXTERNAL_SEEDS.md`](docs/EXTERNAL_SEEDS.md) |
+| Eval only | `eval_problems.py` + KernelBench | Held-out — fingerprints for decontam, never training |
 
-Guards: `task_policy.assert_trainable_task()` blocks `tritonbench` / `eval` split from generation.
-Decontamination: AST structure + prompt hash + semantic fingerprint (`decontaminate.py`).
+Guards: `task_policy.assert_trainable_task()` blocks `tritonbench` / `kernelbench` / `eval` split from generation.
+Decontamination: AST structure + prompt hash + semantic fingerprint + KernelBench PyTorch refs (`decontaminate.py`).
 Release gate: `--release-gate` on `sparkproof-publish-dataset`.
 
 ```bash
+# External corpora → seed prompts → verified multi-turn bundle (CC VM)
+scripts/import_external_tasks.sh --limit 50
+# or:
+uv run sparkproof-import-external-tasks \
+  --opus-traces ppbhatt500/kernelbook-opus4.8-multiturn-traces \
+  --gptoss-traces ppbhatt500/kernelbook-triton-reasoning-traces \
+  --out prompts/kernelbook_seed.jsonl --limit 50
+uv run sparkproof-triton-generate --prompts prompts/kernelbook_seed.jsonl \
+  --out bundles/kb-seed-001 --decontaminate --orchestrate --benchmark
+uv run sparkproof-publish-dataset --bundle bundles/kb-seed-001 --repo-id you/sparkproof-kb --release-gate
+
+Full policy (licenses, KernelBench ban, repair hints, FAQ): **[`docs/EXTERNAL_SEEDS.md`](docs/EXTERNAL_SEEDS.md)**.
+
 # Full Triton pipeline (prompts → best-of-N + repair → prove → verify → SFT → optional HF)
 scripts/run_triton_pipeline.sh --limit 2
 scripts/run_full_diverse.sh --run-id diverse-001 --train   # all doc + mutation + torch_op

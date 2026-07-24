@@ -44,6 +44,7 @@ sparkproof-publish-dataset = "sparkproof.cli.publish_dataset:main"
 sparkproof-download-registry-snapshot = "sparkproof.cli.download_registry_snapshot:main"
 sparkproof-eval-tritonbench = "sparkproof.cli.eval_tritonbench:main"
 sparkproof-yunwu-probe = "sparkproof.cli.yunwu_probe:main"
+sparkproof-import-external-tasks = "sparkproof.cli.import_external_tasks:main"
 sparkproof-summarize-bundle = "sparkproof.cli.summarize_bundle:main"
 
 [build-system]
