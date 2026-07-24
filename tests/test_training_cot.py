@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 
 from sparkproof.publish.hf_dataset import trajectory_to_messages_record
+from sparkproof.teacher_request import generation_config, verify_request_sha256
 from sparkproof.triton_dataset.multi_candidate import CandidateResult, generate_best_of_n
 from sparkproof.triton_dataset.training_cot import (
     has_usable_training_reasoning,
     normalize_training_reasoning,
     recover_openai_winner_cot,
 )
+from tests.conftest_helpers import gateway_record_from_prompt, gateway_trajectory_fields
 
 
 ENCRYPTED_DETAILS = json.dumps(
@@ -74,20 +76,22 @@ def test_sft_export_skips_encrypted_reasoning_json():
 def test_recover_fable_resolve_replaces_sol_winner(monkeypatch):
     calls: list[str] = []
 
-    def fake_generate(*, provider, prompt, **kwargs):
+    def fake_generate(*, provider, prompt, max_tokens=2048, temperature=0.7, system=None, **kwargs):
         calls.append(provider)
         assert provider == "anthropic"
         assert "Reference verified solution" in prompt
-        return {
-            "prompt": prompt,
-            "response": FABLE_RESOLVE_RESPONSE,
-            "provider": "anthropic",
-            "model": "claude-fable-5",
-            "reasoning": FABLE_REASONING,
-            "request_sha256": "cot-req",
-            "response_sha256": "cot-resp",
-            "metadata": {"usage": {"completion_tokens": 100}},
-        }
+        return gateway_record_from_prompt(
+            gateway="openrouter",
+            provider=provider,
+            prompt=prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            model="claude-fable-5",
+            response=FABLE_RESOLVE_RESPONSE,
+            reasoning=FABLE_REASONING,
+            metadata={"usage": {"completion_tokens": 100}},
+        )
 
     class FakeValidator:
         def validate_response(self, response, **kwargs):
@@ -103,10 +107,10 @@ def test_recover_fable_resolve_replaces_sol_winner(monkeypatch):
         record={
             "prompt": "write add kernel",
             "response": SOL_KERNEL,
-            "provider": "openai",
             "model": "gpt-5.6",
             "reasoning": ENCRYPTED_DETAILS,
             "metadata": {"prompt_meta": {"prompt": "write add kernel", "task_id": "t1"}},
+            **gateway_trajectory_fields("openai"),
         },
         validation={"passed": True, "stages": {}},
         repairs_used=0,
@@ -134,34 +138,41 @@ def test_recover_fable_resolve_replaces_sol_winner(monkeypatch):
     assert sft is not None
     assert "<think>" in sft["messages"][2]["content"]
     assert FABLE_REASONING[:40] in sft["messages"][2]["content"]
+    verify_request_sha256(
+        recovered.record,
+        generation_config(max_tokens=2048, temperature=0.7),
+    )
+    assert recovered.record["metadata"].get("cot_request_sha256")
 
 
 def test_recover_fable_explain_keeps_sol_code_when_resolve_fails(monkeypatch):
     calls: list[str] = []
 
-    def fake_generate(*, provider, prompt, **kwargs):
+    def fake_generate(*, provider, prompt, max_tokens=2048, temperature=0.7, system=None, **kwargs):
         calls.append("resolve" if "Reference verified" in prompt else "explain")
         if "Reference verified" in prompt:
-            return {
-                "prompt": prompt,
-                "response": "sorry I failed\n```python\nraise RuntimeError('nope')\n```",
-                "provider": "anthropic",
-                "model": "claude-fable-5",
-                "reasoning": FABLE_REASONING,
-                "request_sha256": "r1",
-                "response_sha256": "r2",
-                "metadata": {},
-            }
-        return {
-            "prompt": prompt,
-            "response": "Detailed rationale about masks and grids.\n\n" + SOL_KERNEL,
-            "provider": "anthropic",
-            "model": "claude-fable-5",
-            "reasoning": FABLE_REASONING,
-            "request_sha256": "e1",
-            "response_sha256": "e2",
-            "metadata": {},
-        }
+            return gateway_record_from_prompt(
+                gateway="yunwu",
+                provider=provider,
+                prompt=prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                model="claude-fable-5",
+                response="sorry I failed\n```python\nraise RuntimeError('nope')\n```",
+                reasoning=FABLE_REASONING,
+            )
+        return gateway_record_from_prompt(
+            gateway="yunwu",
+            provider=provider,
+            prompt=prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            model="claude-fable-5",
+            response="Detailed rationale about masks and grids.\n\n" + SOL_KERNEL,
+            reasoning=FABLE_REASONING,
+        )
 
     class FakeValidator:
         def validate_response(self, response, **kwargs):
@@ -179,11 +190,11 @@ def test_recover_fable_explain_keeps_sol_code_when_resolve_fails(monkeypatch):
         record={
             "prompt": "write add kernel",
             "response": SOL_KERNEL,
-            "provider": "openai",
             "model": "gpt-5.6",
             "reasoning": ENCRYPTED_DETAILS,
             "metadata": {"prompt_meta": {"prompt": "write add kernel"}},
             "sparkproof_validation": {"passed": True},
+            **gateway_trajectory_fields("openai", gateway="yunwu"),
         },
         validation={"passed": True, "stages": {}},
         repairs_used=0,
@@ -208,36 +219,52 @@ def test_recover_fable_explain_keeps_sol_code_when_resolve_fails(monkeypatch):
     assert recovered.record["metadata"]["cot_recovery"] == "fable_explain"
     assert recovered.record["metadata"]["cot_provider"] == "anthropic"
     assert recovered.record["reasoning"] == FABLE_REASONING
+    verify_request_sha256(
+        recovered.record,
+        generation_config(max_tokens=2048, temperature=0.7),
+    )
 
 
 def test_generate_best_of_n_recovers_cot_when_sol_wins(monkeypatch):
-    def fake_generate(*, provider, prompt, **kwargs):
+    def fake_generate(*, provider, prompt, gateway="openrouter", max_tokens=2048, temperature=0.7, system=None, **kwargs):
         if provider == "openai":
-            return {
-                "response": SOL_KERNEL,
-                "provider": "openai",
-                "model": "gpt-5.6",
-                "reasoning": ENCRYPTED_DETAILS,
-                "metadata": {"usage": {"completion_tokens": 10}},
-            }
+            return gateway_record_from_prompt(
+                gateway=gateway,
+                provider=provider,
+                prompt=prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                model="gpt-5.6",
+                response=SOL_KERNEL,
+                reasoning=ENCRYPTED_DETAILS,
+                metadata={"usage": {"completion_tokens": 10}},
+            )
         if "Reference verified" in prompt or "VERIFIED correct" in prompt:
-            return {
-                "response": FABLE_RESOLVE_RESPONSE,
-                "provider": "anthropic",
-                "model": "claude-fable-5",
-                "reasoning": FABLE_REASONING,
-                "request_sha256": "c1",
-                "response_sha256": "c2",
-                "metadata": {"usage": {"completion_tokens": 20}},
-            }
-        # First-pass Fable candidate loses on score (fails validation).
-        return {
-            "response": "```python\nraise RuntimeError('bad')\n```",
-            "provider": "anthropic",
-            "model": "claude-fable-5",
-            "reasoning": FABLE_REASONING,
-            "metadata": {"usage": {"completion_tokens": 5}},
-        }
+            return gateway_record_from_prompt(
+                gateway=gateway,
+                provider=provider,
+                prompt=prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                model="claude-fable-5",
+                response=FABLE_RESOLVE_RESPONSE,
+                reasoning=FABLE_REASONING,
+                metadata={"usage": {"completion_tokens": 20}},
+            )
+        return gateway_record_from_prompt(
+            gateway=gateway,
+            provider=provider,
+            prompt=prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            model="claude-fable-5",
+            response="```python\nraise RuntimeError('bad')\n```",
+            reasoning=FABLE_REASONING,
+            metadata={"usage": {"completion_tokens": 5}},
+        )
 
     class FakeValidator:
         def validate_response(self, response, **kwargs):

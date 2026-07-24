@@ -21,6 +21,7 @@ import re
 from typing import Any
 
 from sparkproof.generate.gateway_client import generate_via_gateway
+from sparkproof.teacher_request import rebind_leaf_prompt
 from sparkproof.triton.validator import TritonKernelValidator
 
 
@@ -128,7 +129,7 @@ def _stamp_cot_meta(
     meta["cot_provider"] = cot_record.get("provider") or COT_PROVIDER
     meta["cot_model"] = cot_record.get("model")
     meta["sol_winner_provider"] = sol_provider
-    if cot_record.get("request_sha256"):
+    if cot_record.get("request_sha256") and "cot_request_sha256" not in meta:
         meta["cot_request_sha256"] = cot_record["request_sha256"]
     if cot_record.get("response_sha256"):
         meta["cot_response_sha256"] = cot_record["response_sha256"]
@@ -194,7 +195,13 @@ def recover_openai_winner_cot(
     )
     # Keep mining-task prompt for SFT / novelty (not the CoT-recovery wrapper).
     resolve_record = dict(resolve_record)
-    resolve_record["prompt"] = task_prompt
+    resolve_record = rebind_leaf_prompt(
+        resolve_record,
+        task_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        preserve_prior_request_sha256_as="cot_request_sha256",
+    )
     if (winner.record.get("metadata") or {}).get("prompt_meta"):
         resolve_record.setdefault("metadata", {})
         resolve_record["metadata"]["prompt_meta"] = winner.record["metadata"]["prompt_meta"]
@@ -247,8 +254,12 @@ def recover_openai_winner_cot(
         explain_reasoning = prose_rationale_from_response(explain_record.get("response") or "")
 
     if not has_usable_training_reasoning(explain_reasoning):
-        cleaned = dict(winner.record)
-        cleaned["prompt"] = task_prompt
+        cleaned = rebind_leaf_prompt(
+            dict(winner.record),
+            task_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
         cleaned["reasoning"] = None
         cleaned.setdefault("metadata", {})
         cleaned["metadata"]["cot_recovery"] = "failed"
@@ -266,7 +277,12 @@ def recover_openai_winner_cot(
         cot_record=explain_record,
         sol_provider="openai",
     )
-    stamped["prompt"] = task_prompt
+    stamped = rebind_leaf_prompt(
+        stamped,
+        task_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
     stamped["reasoning"] = explain_reasoning
     return CandidateResult(
         provider=winner.provider,

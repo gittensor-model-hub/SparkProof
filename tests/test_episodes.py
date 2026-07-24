@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from sparkproof.publish.hf_dataset import trajectory_to_messages_record
+from sparkproof.teacher_request import generation_config, verify_request_sha256
 from sparkproof.triton_dataset.episodes import (
     EPISODE_VERSION,
     episode_to_messages,
     validator_feedback_content,
 )
 from sparkproof.triton_dataset.multi_candidate import generate_with_repair
+from tests.conftest_helpers import gateway_record_from_prompt
 
 
 PASS_CODE = "```python\nprint('SPARKPROOF_TRITON_PASS')\n```"
@@ -39,7 +41,7 @@ def test_validator_feedback_includes_failure():
 def test_generate_with_repair_records_multi_turn_episode(monkeypatch):
     prompts: list[str] = []
 
-    def fake_generate(*, prompt, provider, **kwargs):
+    def fake_generate(*, prompt, provider, max_tokens, temperature, system=None, **kwargs):
         prompts.append(prompt)
         n = len(prompts)
         if n == 1:
@@ -48,16 +50,18 @@ def test_generate_with_repair_records_multi_turn_episode(monkeypatch):
             response = PASS_CODE
         else:
             response = OPT_CODE
-        return {
-            "prompt": prompt,
-            "response": response,
-            "provider": provider,
-            "model": "claude-fable-5",
-            "reasoning": "step by step reasoning about tiling and masks for this kernel.",
-            "request_sha256": f"req{n}",
-            "response_sha256": f"resp{n}",
-            "metadata": {"usage": {"completion_tokens": 10}},
-        }
+        return gateway_record_from_prompt(
+            gateway="openrouter",
+            provider=provider,
+            prompt=prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            model="claude-fable-5",
+            response=response,
+            reasoning="step by step reasoning about tiling and masks for this kernel.",
+            metadata={"usage": {"completion_tokens": 10}},
+        )
 
     monkeypatch.setattr(
         "sparkproof.triton_dataset.multi_candidate.generate_via_gateway",
@@ -124,18 +128,26 @@ def test_generate_with_repair_records_multi_turn_episode(monkeypatch):
     assert sft is not None
     assert sft["metadata"]["multi_turn"] is True
     assert len(sft["messages"]) >= 5  # system + task + attempt + feedback + repair (+ opt…)
+    verify_request_sha256(
+        result.record,
+        generation_config(max_tokens=1024, temperature=0.7),
+    )
+    assert result.record["metadata"].get("optimize_request_sha256")
 
 
 def test_episode_disabled_keeps_single_turn_export(monkeypatch):
-    def fake_generate(*, prompt, provider, **kwargs):
-        return {
-            "prompt": prompt,
-            "response": PASS_CODE,
-            "provider": provider,
-            "model": "claude-fable-5",
-            "reasoning": "short rationale text for the kernel.",
-            "metadata": {},
-        }
+    def fake_generate(*, prompt, provider, max_tokens, temperature, system=None, **kwargs):
+        return gateway_record_from_prompt(
+            gateway="openrouter",
+            provider=provider,
+            prompt=prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            model="claude-fable-5",
+            response=PASS_CODE,
+            reasoning="short rationale text for the kernel.",
+        )
 
     monkeypatch.setattr(
         "sparkproof.triton_dataset.multi_candidate.generate_via_gateway",

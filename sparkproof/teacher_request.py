@@ -96,3 +96,36 @@ def verify_request_sha256(record: dict[str, Any], generation_config: dict[str, A
         meta_effort = meta.get(key)
         if meta_effort and meta_effort != REQUIRED_REASONING_EFFORT:
             raise ValueError(f"metadata.{key} must be {REQUIRED_REASONING_EFFORT!r}")
+
+
+def rebind_leaf_prompt(
+    record: dict[str, Any],
+    task_prompt: str,
+    *,
+    max_tokens: int,
+    temperature: float,
+    preserve_prior_request_sha256_as: str | None = None,
+) -> dict[str, Any]:
+    """Reset the leaf ``prompt`` to the mining task and align ``request_sha256``.
+
+    Repair, optimize, and CoT-recovery calls use wrapper prompts but exported rows
+    must fingerprint the original mining task for SFT/novelty. Recompute the leaf
+    hash from the mining-task body so ``verify_request_sha256`` matches release gate.
+    """
+    rebound = dict(record)
+    prior_hash = rebound.get("request_sha256")
+    if preserve_prior_request_sha256_as and prior_hash:
+        meta = dict(rebound.get("metadata") or {})
+        meta[preserve_prior_request_sha256_as] = prior_hash
+        rebound["metadata"] = meta
+    rebound["prompt"] = task_prompt
+    body = build_chat_body(
+        gateway=rebound["gateway"],
+        provider=rebound["provider"],
+        prompt=task_prompt,
+        system=rebound.get("system"),
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    rebound["request_sha256"] = request_sha256(body)
+    return rebound
