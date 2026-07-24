@@ -24,6 +24,7 @@ from sparkproof.triton_dataset.multi_candidate import _client_value, acceptance_
 from sparkproof.triton_dataset.python_runner import PythonExecution
 from sparkproof.triton_dataset.prompt_templates import apply_prompt_template, wrap_prompt
 from sparkproof.triton_dataset.torch_ops import iter_torch_translation_prompts
+from tests.conftest_helpers import gateway_record_from_prompt
 
 
 VALID_KERNEL = """
@@ -560,8 +561,17 @@ def test_error_capture_classifies_timeout_as_runtime_error(monkeypatch):
 
 
 def test_generate_best_of_n_preserves_original_prompt_for_checkpoint_recovery(monkeypatch):
-    def fake_generate(*, prompt, **kwargs):
-        return {"response": "```python\nprint('SPARKPROOF_TRITON_PASS')\n```"}
+    def fake_generate(*, prompt, provider, max_tokens=2048, temperature=0.7, system=None, gateway="openrouter", **kwargs):
+        return gateway_record_from_prompt(
+            gateway=gateway,
+            provider=provider,
+            prompt=prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            model="claude-fable-5",
+            response="```python\nprint('SPARKPROOF_TRITON_PASS')\n```",
+        )
 
     class FakeValidator:
         def validate_response(self, response, **kwargs):

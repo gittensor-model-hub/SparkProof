@@ -2,11 +2,65 @@
 
 from __future__ import annotations
 
-from sparkproof.gateways import GATEWAY_OPENROUTER, gateway_model_for
+from sparkproof.gateways import GATEWAY_OPENROUTER, gateway_model_for, get_gateway
 from sparkproof.policy import REQUIRED_REASONING_EFFORT
 from sparkproof.teacher_request import build_chat_body, generation_config, request_sha256
 
 TEST_GEN_CONFIG = generation_config(max_tokens=2048, temperature=0.7)
+
+
+def gateway_trajectory_fields(
+    provider: str,
+    *,
+    gateway: str = GATEWAY_OPENROUTER,
+    system: str | None = None,
+) -> dict:
+    policy = get_gateway(gateway)
+    routed_model = gateway_model_for(gateway, provider)
+    fields = {
+        "gateway": gateway,
+        "provider": provider,
+        "system": system,
+        "api_base": policy.api_base,
+        "request_url": policy.chat_url,
+        "gateway_model": routed_model,
+    }
+    if gateway == GATEWAY_OPENROUTER:
+        fields["openrouter_model"] = routed_model
+    return fields
+
+
+def gateway_record_from_prompt(
+    *,
+    gateway: str,
+    provider: str,
+    prompt: str,
+    system: str | None,
+    max_tokens: int,
+    temperature: float,
+    model: str,
+    response: str,
+    reasoning: str | None = None,
+    metadata: dict | None = None,
+) -> dict:
+    body = build_chat_body(
+        gateway=gateway,
+        provider=provider,
+        prompt=prompt,
+        system=system,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return {
+        "prompt": prompt,
+        "response": response,
+        "model": model,
+        "reasoning": reasoning,
+        "request_sha256": request_sha256(body),
+        "response_sha256": "c" * 64,
+        "metadata": metadata or {},
+        **gateway_trajectory_fields(provider, gateway=gateway, system=system),
+    }
 
 
 def make_trajectory(

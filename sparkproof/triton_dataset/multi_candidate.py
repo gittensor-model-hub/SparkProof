@@ -8,6 +8,7 @@ from typing import Any
 
 from sparkproof.generate.gateway_client import generate_via_gateway
 from sparkproof.policy import SUPPORTED_PROVIDERS
+from sparkproof.teacher_request import rebind_leaf_prompt
 from sparkproof.triton.validator import TritonKernelValidator
 from sparkproof.triton_dataset.episodes import (
     assistant_content_from_record,
@@ -229,8 +230,6 @@ def generate_with_repair(
                         )
 
             stamped = dict(final_record)
-            # Leaf hash / SFT user turn must stay on the mining task, not repair wrappers.
-            stamped["prompt"] = prompt
             stamped["sparkproof_validation"] = final_validation
             tier = assign_tier(
                 final_validation,
@@ -254,6 +253,18 @@ def generate_with_repair(
                     final_speedup=_speedup(final_validation) or None,
                 )
                 stamped = stamp_episode(stamped, episode)
+            preserve_as = None
+            if optimize_used:
+                preserve_as = "optimize_request_sha256"
+            elif repairs_used > 0:
+                preserve_as = "repair_request_sha256"
+            stamped = rebind_leaf_prompt(
+                stamped,
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                preserve_prior_request_sha256_as=preserve_as,
+            )
             usage = (
                 (stamped.get("metadata") or {}).get("usage")
                 or (final_record.get("metadata") or {}).get("usage")
@@ -280,7 +291,6 @@ def generate_with_repair(
     if last_record is None or last_validation is None:
         return None
     failed = dict(last_record)
-    failed["prompt"] = prompt
     if prompt_meta:
         failed.setdefault("metadata", {})
         failed["metadata"]["prompt_meta"] = prompt_meta
@@ -296,6 +306,13 @@ def generate_with_repair(
             optimize_improved=False,
         )
         failed = stamp_episode(failed, episode)
+    failed = rebind_leaf_prompt(
+        failed,
+        prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        preserve_prior_request_sha256_as="repair_request_sha256" if repairs > 0 else None,
+    )
     return CandidateResult(
         provider=provider,
         record=failed,
